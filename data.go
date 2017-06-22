@@ -1,33 +1,34 @@
-package apiGatewayDeploy
+package apiGatewayConfDeploy
 
 import (
 	"database/sql"
 	"sync"
 
 	"github.com/30x/apid-core"
-
 )
 
 var (
 	unsafeDB apid.DB
 	dbMux    sync.RWMutex
+	gwBlobId int64
 )
 
 type DataDeployment struct {
-	ID                 string
-	OrgID              string
-	EnvID              string
-	Type               string
-	Name		   string
-	Revision           string
-	BlobID             string
-	BlobResourceID     string
-	Updated            string
-	UpdatedBy          string
-	Created		   string
-	CreatedBy          string
-	BlobFSLocation     string
-	BlobURL            string
+	ID             string
+	OrgID          string
+	EnvID          string
+	Type           string
+	Name           string
+	Revision       string
+	BlobID         string
+	GWBlobID       string
+	BlobResourceID string
+	Updated        string
+	UpdatedBy      string
+	Created        string
+	CreatedBy      string
+	BlobFSLocation string
+	BlobURL        string
 }
 
 type SQLExec interface {
@@ -37,7 +38,8 @@ type SQLExec interface {
 func InitDB(db apid.DB) error {
 	_, err := db.Exec(`
 	CREATE TABLE IF NOT EXISTS edgex_blob_available (
-   		blob_id character varying NOT NULL,
+   		gwblobid integer primary key,
+   		runtime_meta_id character varying NOT NULL,
    		local_fs_location character varying NOT NULL,
    		access_url character varying
 	);
@@ -72,11 +74,11 @@ func getUnreadyDeployments() (deployments []DataDeployment, err error) {
 	db := getDB()
 
 	rows, err := db.Query(`
-	SELECT id, org_id, env_id, name, revision, project_runtime_blob_metadata.blob_id, resource_blob_id
+	SELECT project_runtime_blob_metadata.id, org_id, env_id, name, revision, blob_id, resource_blob_id
 		FROM project_runtime_blob_metadata
 			LEFT JOIN edgex_blob_available
-			ON project_runtime_blob_metadata.blob_id = edgex_blob_available.blob_id
-		WHERE edgex_blob_available.blob_id IS NULL;
+			ON project_runtime_blob_metadata.id = edgex_blob_available.runtime_meta_id
+		WHERE edgex_blob_available.runtime_meta_id IS NULL;
 	`)
 
 	if err != nil {
@@ -87,7 +89,7 @@ func getUnreadyDeployments() (deployments []DataDeployment, err error) {
 
 	for rows.Next() {
 		dep := DataDeployment{}
-		rows.Scan(&dep.ID, &dep.OrgID, &dep.EnvID,  &dep.Name, &dep.Revision, &dep.BlobID,
+		rows.Scan(&dep.ID, &dep.OrgID, &dep.EnvID, &dep.Name, &dep.Revision, &dep.BlobID,
 			&dep.BlobResourceID)
 		deployments = append(deployments, dep)
 		log.Debugf("New configurations to be processed Id {%s}, blobId {%s}", dep.ID, dep.BlobID)
@@ -109,10 +111,10 @@ func getReadyDeployments() (deployments []DataDeployment, err error) {
 	rows, err := db.Query(`
 	SELECT a.id, a.org_id, a.env_id, a.name, a.type, a.revision, a.blob_id,
 		a.resource_blob_id, a.created_at, a.created_by, a.updated_at, a.updated_by,
-		b.local_fs_location, b.access_url
+		b.local_fs_location, b.access_url, b.gwblobid
 		FROM project_runtime_blob_metadata as a
 			INNER JOIN edgex_blob_available as b
-			ON a.blob_id = b.blob_id
+			ON a.id = b.runtime_meta_id
 	`)
 
 	if err != nil {
@@ -125,7 +127,7 @@ func getReadyDeployments() (deployments []DataDeployment, err error) {
 		dep := DataDeployment{}
 		rows.Scan(&dep.ID, &dep.OrgID, &dep.EnvID, &dep.Name, &dep.Type, &dep.Revision, &dep.BlobID,
 			&dep.BlobResourceID, &dep.Created, &dep.CreatedBy, &dep.Updated,
-			&dep.UpdatedBy, &dep.BlobFSLocation, &dep.BlobURL)
+			&dep.UpdatedBy, &dep.BlobFSLocation, &dep.BlobURL, &dep.GWBlobID)
 		deployments = append(deployments, dep)
 		log.Debugf("New Configurations available Id {%s} BlobId {%s}", dep.ID, dep.BlobID)
 	}
@@ -137,19 +139,19 @@ func getReadyDeployments() (deployments []DataDeployment, err error) {
 
 }
 
-func updatelocal_fs_location(depID, local_fs_location string) error {
+func updatelocal_fs_location(depID, bundleId, local_fs_location string) error {
 
-	access_url :=  config.GetString("api_listen") + "/blob/" + depID
+	access_url := get_http_host() + "/blob/" + bundleId
 	stmt, err := getDB().Prepare(`
-		INSERT INTO edgex_blob_available (blob_id, local_fs_location, access_url)
-			VALUES (?, ?, ?)`)
+		INSERT INTO edgex_blob_available (runtime_meta_id, gwblobid, local_fs_location, access_url)
+			VALUES (?, ?, ?, ?)`)
 	if err != nil {
 		log.Errorf("PREPARE updatelocal_fs_location failed: %v", err)
 		return err
 	}
 	defer stmt.Close()
 
-	_, err = stmt.Exec(depID, local_fs_location, access_url)
+	_, err = stmt.Exec(depID, bundleId, local_fs_location, access_url)
 	if err != nil {
 		log.Errorf("UPDATE edgex_blob_available id {%s} local_fs_location {%s} failed: %v", depID, local_fs_location, err)
 		return err
@@ -160,17 +162,20 @@ func updatelocal_fs_location(depID, local_fs_location string) error {
 
 }
 
-func getLocalFSLocation (blobId string) (locfs string , err error) {
+func getLocalFSLocation(blobId string) (locfs string, err error) {
 
 	db := getDB()
-
-	rows, err := db.Query("SELECT local_fs_location FROM edgex_blob_available WHERE blob_id = " + blobId)
+	log.Debugf("Getting the blob file for blobId {%s}", blobId)
+	rows, err := db.Query("SELECT local_fs_location FROM edgex_blob_available WHERE gwblobid = \"" + blobId + "\"")
 	if err != nil {
 		log.Errorf("SELECT local_fs_location failed %v", err)
 		return "", err
 	}
 
 	defer rows.Close()
-	rows.Scan(&locfs)
+	for rows.Next() {
+		rows.Scan(&locfs)
+		log.Debugf("Got the blob file {%s} for blobId {%s}", locfs, blobId)
+	}
 	return
 }

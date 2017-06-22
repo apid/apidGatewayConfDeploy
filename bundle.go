@@ -1,7 +1,6 @@
-package apiGatewayDeploy
+package apiGatewayConfDeploy
 
 import (
-
 	"encoding/base64"
 	"fmt"
 	"io"
@@ -10,12 +9,15 @@ import (
 	"net/url"
 	"os"
 	"path"
+	"strconv"
+	"sync/atomic"
 	"time"
 )
 
 const (
 	BLOBSTORE_URI = "/v1/blobstore/signeduri"
 )
+
 var (
 	markDeploymentFailedAfter time.Duration
 	bundleDownloadConnTimeout time.Duration
@@ -78,7 +80,12 @@ func (r *DownloadRequest) downloadBundle() {
 	}
 
 	if err == nil {
-		err = updatelocal_fs_location(dep.BlobID, r.bundleFile)
+		blobId := atomic.AddInt64(&gwBlobId, 1)
+		blobIds := strconv.FormatInt(blobId, 10)
+		err = updatelocal_fs_location(dep.ID, blobIds, r.bundleFile)
+		if err != nil {
+			dep.GWBlobID = blobIds
+		}
 	}
 
 	if err != nil {
@@ -142,7 +149,6 @@ func getSignedURL(blobId string) (string, error) {
 	}
 	return string(signedURL), nil
 }
-
 
 // downloadFromURI involves retrieving the signed URL for the blob, and storing the resource locally
 // after downloading the resource from GCS (via the signed URL)

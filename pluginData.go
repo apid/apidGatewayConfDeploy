@@ -1,4 +1,4 @@
-package apiGatewayDeploy
+package apiGatewayConfDeploy
 
 import "github.com/30x/apid-core"
 

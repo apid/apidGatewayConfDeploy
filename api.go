@@ -1,12 +1,15 @@
-package apiGatewayDeploy
+package apiGatewayConfDeploy
 
 import (
+	"bytes"
 	"encoding/json"
+	"github.com/gorilla/mux"
+	"io"
+	"io/ioutil"
 	"net/http"
 	"strconv"
 	"sync/atomic"
 	"time"
-	"github.com/gorilla/mux"
 )
 
 // todo: the full set of states should probably be RECEIVED, READY, FAIL, SUCCESS
@@ -49,27 +52,25 @@ type errorResponse struct {
 }
 
 type ApiDeploymentDetails struct {
-	Self             string          `json:self`
-	Name             string          `json:name`
-	Org              string          `json:org`
-	Env              string          `json:env`
-	Scope            string          `json:scope`
-	Type             string          `json:type`
-	BlobURL          string          `json:bloburl`
-	Revision         string          `json:revision`
-	BlobId           string          `json:blobId`
-	ResourceBlobId   string          `json:resourceBlobId`
-	Created          string          `json:created`
-	Updated          string          `json:updated`
-
+	Self           string `json:"self"`
+	Name           string `json:"name"`
+	Org            string `json:"org"`
+	Env            string `json:"env"`
+	Scope          string `json:"scope"`
+	Type           string `json:"type"`
+	BlobURL        string `json:"bloburl"`
+	Revision       string `json:"revision"`
+	BlobId         string `json:"blobId"`
+	ResourceBlobId string `json:"resourceBlobId"`
+	Created        string `json:"created"`
+	Updated        string `json:"updated"`
 }
 
 type ApiDeploymentResponse struct {
-	Kind                  string                 `json:kind`
-	Self                  string                 `json:self`
-	ApiDeploymentResponse []ApiDeploymentDetails `json:contents`
+	Kind                  string                 `json:"kind"`
+	Self                  string                 `json:"self"`
+	ApiDeploymentResponse []ApiDeploymentDetails `json:"contents"`
 }
-
 
 const deploymentsEndpoint = "/configurations"
 const BlobEndpoint = "/blob/{blobId}"
@@ -94,8 +95,8 @@ func writeError(w http.ResponseWriter, status int, code int, reason string) {
 	log.Debugf("sending %d error to client: %s", status, reason)
 }
 
-func writeDatabaseError(w http.ResponseWriter) {
-	writeError(w, http.StatusInternalServerError, API_ERR_INTERNAL, "database error")
+func writeInternalError(w http.ResponseWriter, err string) {
+	writeError(w, http.StatusInternalServerError, API_ERR_INTERNAL, err)
 }
 
 func debounce(in chan interface{}, out chan []interface{}, window time.Duration) {
@@ -159,14 +160,23 @@ func distributeEvents() {
 }
 
 func apiReturnBlobData(w http.ResponseWriter, r *http.Request) {
+
 	vars := mux.Vars(r)
 	blobId := vars["blobId"]
-	_, err := getLocalFSLocation(blobId)
+	fs, err := getLocalFSLocation(blobId)
 	if err != nil {
-		writeDatabaseError(w)
+		writeInternalError(w, "BlobId "+blobId+" has no mapping blob file")
 		return
 	}
-
+	byte, err := ioutil.ReadFile(fs)
+	if err != nil {
+		writeInternalError(w, err.Error())
+		return
+	}
+	_, err = io.Copy(w, bytes.NewReader(byte))
+	if err != nil {
+		writeInternalError(w, err.Error())
+	}
 
 }
 
@@ -221,7 +231,7 @@ func apiGetCurrentDeployments(w http.ResponseWriter, r *http.Request) {
 	select {
 	case result := <-newDeploymentsChannel:
 		if result.err != nil {
-			writeDatabaseError(w)
+			writeInternalError(w, "Database error")
 		} else {
 			sendDeployments(w, result.deployments, result.eTag)
 		}
@@ -241,10 +251,20 @@ func sendReadyDeployments(w http.ResponseWriter) {
 	eTag := getETag()
 	deployments, err := getReadyDeployments()
 	if err != nil {
-		writeDatabaseError(w)
+		writeInternalError(w, "Database error")
 		return
 	}
 	sendDeployments(w, deployments, eTag)
+}
+
+func get_http_host() string {
+	// apid-core has to set this according to the protocol apid is to be run: http/https
+	proto := config.GetString("protocol_type")
+	if proto == "" {
+		proto = "http"
+	}
+	proto = proto + "://" + config.GetString("api_listen")
+	return proto
 }
 
 func sendDeployments(w http.ResponseWriter, dataDeps []DataDeployment, eTag string) {
@@ -253,19 +273,19 @@ func sendDeployments(w http.ResponseWriter, dataDeps []DataDeployment, eTag stri
 	apiDepDetails := []ApiDeploymentDetails{}
 
 	apiDeps.Kind = "Collections"
-	apiDeps.Self = config.GetString("api_listen") +"/configurations"
+	apiDeps.Self = get_http_host() + "/configurations"
 
 	for _, d := range dataDeps {
 		apiDepDetails = append(apiDepDetails, ApiDeploymentDetails{
-			Org:   	    	d.OrgID,
-			Env:        	d.EnvID,
-			Revision:   	d.Revision,
-			BlobId:     	d.BlobID,
-			ResourceBlobId:	d.BlobResourceID,
-			Created:    	d.Created,
-			Updated:    	d.Updated,
-			Type:      	d.Type,
-			BlobURL:    	d.BlobURL,
+			Org:            d.OrgID,
+			Env:            d.EnvID,
+			Revision:       d.Revision,
+			BlobId:         d.GWBlobID,
+			ResourceBlobId: d.BlobResourceID,
+			Created:        d.Created,
+			Updated:        d.Updated,
+			Type:           d.Type,
+			BlobURL:        d.BlobURL,
 		})
 	}
 	apiDeps.ApiDeploymentResponse = apiDepDetails
@@ -292,4 +312,3 @@ func getETag() string {
 	e := atomic.LoadInt64(&eTag)
 	return strconv.FormatInt(e, 10)
 }
-

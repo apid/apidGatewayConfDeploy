@@ -1,17 +1,17 @@
-package apiGatewayDeploy
+package apiGatewayConfDeploy
 
 import (
 	"os"
 	"time"
 
+	"database/sql"
 	"github.com/30x/apid-core"
 	"github.com/apigee-labs/transicator/common"
-	"database/sql"
 )
 
 const (
-	APIGEE_SYNC_EVENT = "ApigeeSync"
-	CONFIG_METADATA_TABLE  = "project.runtime_blob_metadata"
+	APIGEE_SYNC_EVENT     = "ApigeeSync"
+	CONFIG_METADATA_TABLE = "project.runtime_blob_metadata"
 )
 
 func initListener(services apid.Services) {
@@ -94,7 +94,7 @@ func processChangeList(changes *common.ChangeList) {
 				change.OldRow.Get("id", &id)
 				// only need these two fields to delete and determine bundle file
 				dep := DataDeployment{
-					ID:          id,
+					ID: id,
 				}
 				deletedDeployments = append(deletedDeployments, dep)
 			default:

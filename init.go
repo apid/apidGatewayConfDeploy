@@ -1,4 +1,4 @@
-package apiGatewayDeploy
+package apiGatewayConfDeploy
 
 import (
 	"fmt"
@@ -47,7 +47,7 @@ func init() {
 
 func initPlugin(s apid.Services) (apid.PluginData, error) {
 	services = s
-	log = services.Log().ForModule("apiGatewayDeploy")
+	log = services.Log().ForModule("apiGatewayConfDeploy")
 	log.Debug("start init")
 
 	config = services.Config()
