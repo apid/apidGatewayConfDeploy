@@ -1,0 +1,159 @@
+swagger: '2.0'
+ 
+info:
+  version: "0.0.1"
+  title: apid apis for gateway
+  description: |
+    API for querying gateway configuration changes and complete state
+  contact:
+    name: Apigee, Inc.
+    url: http://www.apigee.com/
+    email: sales@apigee.com
+  license:
+    name: Apache 2.0
+    url: https://www.apache.org/licenses/LICENSE-2.0
+    
+host: "localhost:9000"
+basePath: "/"    
+schemes:
+- "https"
+tags:
+- name: "configurations"
+  description: "Get Configurations"
+- name: "blob"
+  description: "Blob Download"
+paths:
+  /configurations:
+    get:
+      tags:
+      - "configurations"
+      description: |
+        Get list of configurations associated with apid's datascope
+      parameters:
+        - name: "block"
+          in: "query"
+          type: string
+          description: "Long poll block duration in seconds"
+        - name: "If-None-Match" 
+          in: "header"
+          type: string
+          description: "ETag value from request in previous request" 
+      responses:
+        200:
+          description: Successful response
+          headers:
+            ETag:
+              type: "string"
+              description: "client can use this for response caching"        
+          schema:
+            $ref: '#/definitions/ConfigurationsResponse'
+        304:
+          description: Not Modified, No change in response based on If-None-Match header value. Cache representation.
+          headers:
+            ETag:
+              type: "string"
+              description: "client can use this for response caching"                    
+        default:
+          description: Error response
+          schema:
+            $ref: '#/definitions/ErrorResponse'
+ 
+  /blobs/{blobId}:
+    get:
+      tags:
+      - "blob"
+      description: "Blob Download"
+      parameters:
+        - name: blobId
+          in: path
+          required: true
+          type: string
+          description: blobId
+        - name: "If-None-Match" 
+          in: "header"
+          type: string
+          required: false
+          description: "ETag value from request in previous request" 
+      responses:
+        200:
+          description: Successful response
+          headers:
+            Content-type:
+              type: "string"
+              description : "application/octet-stream"
+            ETag:
+              type: "string"
+              description: "client can use this for response caching"        
+        304:
+          description: Not Modified, No change in response based on If-None-Match header value. Cache representation.
+          headers:
+            ETag:
+              type: "string"
+              description: "client can use this for response caching"     
+        404:
+          description: Not Found
+          schema:
+            $ref: '#/definitions/ErrorResponse'            
+        default:
+          description: Error response
+          schema:
+            $ref: '#/definitions/ErrorResponse'            
+
+definitions:
+  ConfigurationsResponse:
+    properties:  
+      kind:
+        type: string
+      self:
+        type: string
+      contents: 
+        type: array
+        items:
+          $ref: '#/definitions/Configurations'  
+ 
+  Configurations:
+    properties:
+      self:
+        type: string
+        description: url to access this config
+      name:
+        type: string
+        description: configuration name
+      type:
+        type: string            
+        description: type of configuration
+      organization:
+        type: string
+        description: organization id
+      environment:
+        type: string
+        description: environment id
+      revision:
+        type: string   
+        description: revision of blob
+      blobId:
+        type: string
+        description: blob id
+      blobUrl:
+        type: string
+        description: url to download blob
+      resourceBlobId:
+        type: string
+      created:
+        type: string
+        description: Entity creation date. ISO8601 representation
+      updated:
+        type: string
+        description: Entity updated date. ISO8601 representation
+ 
+  ErrorResponse:
+    properties:
+      status:
+        type: string
+      message:
+        type: string
+      errors:
+        type: array
+        items:
+          type: string
+ 
