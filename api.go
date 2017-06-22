@@ -56,7 +56,6 @@ type ApiDeploymentDetails struct {
 	Name           string `json:"name"`
 	Org            string `json:"org"`
 	Env            string `json:"env"`
-	Scope          string `json:"scope"`
 	Type           string `json:"type"`
 	BlobURL        string `json:"bloburl"`
 	Revision       string `json:"revision"`
