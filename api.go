@@ -1,3 +1,16 @@
+// Copyright 2017 Google Inc.
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//      http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
 package apiGatewayConfDeploy
 
 import (
@@ -31,6 +44,7 @@ const (
 	sqlTimeFormat    = "2006-01-02 15:04:05.999 -0700 MST"
 	iso8601          = "2006-01-02T15:04:05.999Z07:00"
 	sqliteTimeFormat = "2006-01-02 15:04:05.999-07:00"
+	changeTimeFormat = "2006-01-02 15:04:05.999"
 )
 
 type deploymentsResult struct {
@@ -54,27 +68,29 @@ type errorResponse struct {
 type ApiDeploymentDetails struct {
 	Self           string `json:"self"`
 	Name           string `json:"name"`
-	Org            string `json:"org"`
-	Env            string `json:"env"`
 	Type           string `json:"type"`
-	BlobURL        string `json:"bloburl"`
+	Org            string `json:"organization"`
+	Env            string `json:"environment"`
+	Scope          string `json:"scope"`
 	Revision       string `json:"revision"`
 	BlobId         string `json:"blobId"`
+	BlobURL        string `json:"bloburl"`
 	ResourceBlobId string `json:"resourceBlobId"`
 	Created        string `json:"created"`
 	Updated        string `json:"updated"`
 }
 
 type ApiDeploymentResponse struct {
-	Kind                  string                 `json:"kind"`
-	Self                  string                 `json:"self"`
-	ApiDeploymentResponse []ApiDeploymentDetails `json:"contents"`
+	Kind                   string                 `json:"kind"`
+	Self                   string                 `json:"self"`
+	ApiDeploymentsResponse []ApiDeploymentDetails `json:"contents"`
 }
 
 const deploymentsEndpoint = "/configurations"
 const BlobEndpoint = "/blob/{blobId}"
 
 func InitAPI() {
+	log.Debug("API endpoints initialized")
 	services.API().HandleFunc(deploymentsEndpoint, apiGetCurrentDeployments).Methods("GET")
 	services.API().HandleFunc(BlobEndpoint, apiReturnBlobData).Methods("GET")
 }
@@ -126,7 +142,7 @@ func debounce(in chan interface{}, out chan []interface{}, window time.Duration)
 }
 
 func distributeEvents() {
-	subscribers := make(map[chan deploymentsResult]struct{})
+	subscribers := make(map[chan deploymentsResult]bool)
 	deliverDeployments := make(chan []interface{}, 1)
 
 	go debounce(deploymentsChanged, deliverDeployments, debounceDuration)
@@ -138,10 +154,10 @@ func distributeEvents() {
 				return // todo: using this?
 			}
 			subs := subscribers
-			subscribers = make(map[chan deploymentsResult]struct{})
+			subscribers = make(map[chan deploymentsResult]bool)
 			go func() {
 				eTag := incrementETag()
-				deployments, err := getUnreadyDeployments()
+				deployments, err := dbMan.getUnreadyDeployments()
 				log.Debugf("delivering deployments to %d subscribers", len(subs))
 				for subscriber := range subs {
 					log.Debugf("delivering to: %v", subscriber)
@@ -150,7 +166,7 @@ func distributeEvents() {
 			}()
 		case subscriber := <-addSubscriber:
 			log.Debugf("Add subscriber: %v", subscriber)
-			subscribers[subscriber] = struct{}{}
+			subscribers[subscriber] = true
 		case subscriber := <-removeSubscriber:
 			log.Debugf("Remove subscriber: %v", subscriber)
 			delete(subscribers, subscriber)
@@ -162,7 +178,7 @@ func apiReturnBlobData(w http.ResponseWriter, r *http.Request) {
 
 	vars := mux.Vars(r)
 	blobId := vars["blobId"]
-	fs, err := getLocalFSLocation(blobId)
+	fs, err := dbMan.getLocalFSLocation(blobId)
 	if err != nil {
 		writeInternalError(w, "BlobId "+blobId+" has no mapping blob file")
 		return
@@ -248,7 +264,7 @@ func apiGetCurrentDeployments(w http.ResponseWriter, r *http.Request) {
 
 func sendReadyDeployments(w http.ResponseWriter) {
 	eTag := getETag()
-	deployments, err := getReadyDeployments()
+	deployments, err := dbMan.getReadyDeployments()
 	if err != nil {
 		writeInternalError(w, "Database error")
 		return
@@ -256,7 +272,7 @@ func sendReadyDeployments(w http.ResponseWriter) {
 	sendDeployments(w, deployments, eTag)
 }
 
-func get_http_host() string {
+func getHttpHost() string {
 	// apid-core has to set this according to the protocol apid is to be run: http/https
 	proto := config.GetString("protocol_type")
 	if proto == "" {
@@ -269,25 +285,28 @@ func get_http_host() string {
 func sendDeployments(w http.ResponseWriter, dataDeps []DataDeployment, eTag string) {
 
 	apiDeps := ApiDeploymentResponse{}
-	apiDepDetails := []ApiDeploymentDetails{}
+	apiDepDetails := make([]ApiDeploymentDetails, 0)
 
 	apiDeps.Kind = "Collections"
-	apiDeps.Self = get_http_host() + "/configurations"
+	apiDeps.Self = getHttpHost() + "/configurations"
 
 	for _, d := range dataDeps {
 		apiDepDetails = append(apiDepDetails, ApiDeploymentDetails{
+			Self:           apiDeps.Self + "/" + d.ID,
+			Name:		d.Name,
+			Type:           d.Type,
 			Org:            d.OrgID,
 			Env:            d.EnvID,
+			Scope:          getDeploymentScope(),
 			Revision:       d.Revision,
 			BlobId:         d.GWBlobID,
-			ResourceBlobId: d.BlobResourceID,
-			Created:        d.Created,
-			Updated:        d.Updated,
-			Type:           d.Type,
 			BlobURL:        d.BlobURL,
+			ResourceBlobId: d.BlobResourceID,
+			Created:        convertTime(d.Created),
+			Updated:        convertTime(d.Updated),
 		})
 	}
-	apiDeps.ApiDeploymentResponse = apiDepDetails
+	apiDeps.ApiDeploymentsResponse = apiDepDetails
 
 	b, err := json.Marshal(apiDeps)
 	if err != nil {
@@ -311,3 +330,24 @@ func getETag() string {
 	e := atomic.LoadInt64(&eTag)
 	return strconv.FormatInt(e, 10)
 }
+
+// TODO
+func getDeploymentScope() string{
+	return ""
+}
+
+func convertTime(t string) string {
+	if t == "" {
+		return ""
+	}
+	formats := []string{sqliteTimeFormat, sqlTimeFormat, iso8601, time.RFC3339, changeTimeFormat}
+	for _, f := range formats {
+		timestamp, err := time.Parse(f, t)
+		if err == nil {
+			return timestamp.Format(iso8601)
+		}
+	}
+	log.Error("convertTime: Unsupported time format: " + t)
+	return t
+}
+

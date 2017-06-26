@@ -1,3 +1,16 @@
+// Copyright 2017 Google Inc.
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//      http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
 package apiGatewayConfDeploy
 
 import (
@@ -8,8 +21,7 @@ import (
 )
 
 var (
-	unsafeDB apid.DB
-	dbMux    sync.RWMutex
+	dbMan dbManagerInterface
 	gwBlobId int64
 )
 
@@ -35,8 +47,41 @@ type SQLExec interface {
 	Exec(query string, args ...interface{}) (sql.Result, error)
 }
 
-func InitDB(db apid.DB) error {
-	_, err := db.Exec(`
+
+type dbManagerInterface interface {
+	setDbVersion(string)
+	initDb() error
+	getUnreadyDeployments() ([]DataDeployment, error)
+	getReadyDeployments() ([]DataDeployment, error)
+	updateLocalFsLocation(string, string, string) error
+	getLocalFSLocation(string) (string, error)
+}
+
+
+type dbManager struct {
+	data apid.DataService
+	db apid.DB
+	dbMux    sync.RWMutex
+}
+
+func (dbc *dbManager) setDbVersion(version string) {
+	db, err := dbc.data.DBVersion(version)
+	if err != nil {
+		log.Panicf("Unable to access database: %v", err)
+	}
+	dbc.dbMux.Lock()
+	dbc.db = db
+	dbc.dbMux.Unlock()
+}
+
+func (dbc *dbManager) getDb() apid.DB {
+	dbc.dbMux.RLock()
+	defer dbc.dbMux.RUnlock()
+	return dbc.db
+}
+
+func (dbc *dbManager) initDb() error{
+	_, err := dbc.getDb().Exec(`
 	CREATE TABLE IF NOT EXISTS edgex_blob_available (
    		gwblobid integer primary key,
    		runtime_meta_id character varying NOT NULL,
@@ -52,28 +97,11 @@ func InitDB(db apid.DB) error {
 	return nil
 }
 
-func getDB() apid.DB {
-	dbMux.RLock()
-	db := unsafeDB
-	dbMux.RUnlock()
-	return db
-}
-
-// caller is responsible for calling dbMux.Lock() and dbMux.Unlock()
-func SetDB(db apid.DB) {
-	if unsafeDB == nil { // init API when DB is initialized
-		go InitAPI()
-	}
-	unsafeDB = db
-}
-
 // getUnreadyDeployments() returns array of resources that are not yet to be processed
-func getUnreadyDeployments() (deployments []DataDeployment, err error) {
+func (dbc *dbManager) getUnreadyDeployments() (deployments []DataDeployment, err error) {
 
-	err = nil
-	db := getDB()
 
-	rows, err := db.Query(`
+	rows, err := dbc.getDb().Query(`
 	SELECT project_runtime_blob_metadata.id, org_id, env_id, name, revision, blob_id, resource_blob_id
 		FROM project_runtime_blob_metadata
 			LEFT JOIN edgex_blob_available
@@ -103,12 +131,10 @@ func getUnreadyDeployments() (deployments []DataDeployment, err error) {
 }
 
 // getDeployments()
-func getReadyDeployments() (deployments []DataDeployment, err error) {
+func (dbc *dbManager) getReadyDeployments() (deployments []DataDeployment, err error) {
 
-	err = nil
-	db := getDB()
 
-	rows, err := db.Query(`
+	rows, err := dbc.getDb().Query(`
 	SELECT a.id, a.org_id, a.env_id, a.name, a.type, a.revision, a.blob_id,
 		a.resource_blob_id, a.created_at, a.created_by, a.updated_at, a.updated_by,
 		b.local_fs_location, b.access_url, b.gwblobid
@@ -139,10 +165,10 @@ func getReadyDeployments() (deployments []DataDeployment, err error) {
 
 }
 
-func updatelocal_fs_location(depID, bundleId, local_fs_location string) error {
+func (dbc *dbManager) updateLocalFsLocation(depID, bundleId, localFsLocation string) error {
 
-	access_url := get_http_host() + "/blob/" + bundleId
-	stmt, err := getDB().Prepare(`
+	access_url := getHttpHost() + "/blob/" + bundleId
+	stmt, err := dbc.getDb().Prepare(`
 		INSERT INTO edgex_blob_available (runtime_meta_id, gwblobid, local_fs_location, access_url)
 			VALUES (?, ?, ?, ?)`)
 	if err != nil {
@@ -151,22 +177,21 @@ func updatelocal_fs_location(depID, bundleId, local_fs_location string) error {
 	}
 	defer stmt.Close()
 
-	_, err = stmt.Exec(depID, bundleId, local_fs_location, access_url)
+	_, err = stmt.Exec(depID, bundleId, localFsLocation, access_url)
 	if err != nil {
-		log.Errorf("UPDATE edgex_blob_available id {%s} local_fs_location {%s} failed: %v", depID, local_fs_location, err)
+		log.Errorf("UPDATE edgex_blob_available id {%s} local_fs_location {%s} failed: %v", depID, localFsLocation, err)
 		return err
 	}
 
-	log.Debugf("INSERT edgex_blob_available {%s} local_fs_location {%s} succeeded", depID, local_fs_location)
+	log.Debugf("INSERT edgex_blob_available {%s} local_fs_location {%s} succeeded", depID, localFsLocation)
 	return nil
 
 }
 
-func getLocalFSLocation(blobId string) (locfs string, err error) {
+func (dbc *dbManager) getLocalFSLocation(blobId string) (locfs string, err error) {
 
-	db := getDB()
 	log.Debugf("Getting the blob file for blobId {%s}", blobId)
-	rows, err := db.Query("SELECT local_fs_location FROM edgex_blob_available WHERE gwblobid = \"" + blobId + "\"")
+	rows, err := dbc.getDb().Query("SELECT local_fs_location FROM edgex_blob_available WHERE gwblobid = \"" + blobId + "\"")
 	if err != nil {
 		log.Errorf("SELECT local_fs_location failed %v", err)
 		return "", err
