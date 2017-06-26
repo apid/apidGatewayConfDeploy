@@ -31,8 +31,8 @@ var _ = Describe("api", func() {
 
 		It("should get empty set if no deployments", func() {
 
-			uri, err := url.Parse(apiServerBaseURI)
-			Expect(err).Should(Succeed())
+			var uri url.URL
+			uri = *apiServerBaseURI
 			uri.Path = deploymentsEndpoint
 			res, err := http.Get(uri.String())
 			Expect(err).Should(Succeed())

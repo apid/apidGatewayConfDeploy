@@ -6,10 +6,8 @@ import (
 	"github.com/30x/apid-core"
 	"github.com/30x/apid-core/factory"
 	"io/ioutil"
-	"net/http/httptest"
 	"time"
 	"os"
-	"net/url"
 )
 
 
