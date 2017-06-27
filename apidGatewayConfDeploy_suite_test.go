@@ -1,18 +1,18 @@
 package apiGatewayConfDeploy
 
 import (
-	. "github.com/onsi/ginkgo"
-	. "github.com/onsi/gomega"
 	"github.com/30x/apid-core"
 	"github.com/30x/apid-core/factory"
+	. "github.com/onsi/ginkgo"
+	. "github.com/onsi/gomega"
 	"io/ioutil"
-	"time"
 	"os"
+	"testing"
+	"time"
 )
 
-
 var (
-	tmpDir              string
+	tmpDir string
 )
 
 var _ = BeforeSuite(func() {
@@ -27,18 +27,16 @@ var _ = BeforeSuite(func() {
 	config.Set(configApidClusterID, "CLUSTER_ID")
 	config.Set(configApiServerBaseURI, "http://localhost")
 	config.Set(configDebounceDuration, "1ms")
-	apid.InitializePlugins("")
-
-
-	bundleCleanupDelay = time.Millisecond
-	bundleRetryDelay = 10 * time.Millisecond
-	markDeploymentFailedAfter = 50 * time.Millisecond
-	concurrentDownloads = 1
-	downloadQueueSize = 1
-
+	config.Set(configDownloadQueueSize, 1)
+	config.Set(configBundleCleanupDelay, time.Millisecond)
 })
 
 var _ = AfterSuite(func() {
 	apid.Events().Close()
 	os.RemoveAll(tmpDir)
 })
+
+func TestApidGatewayDeploy(t *testing.T) {
+	RegisterFailHandler(Fail)
+	RunSpecs(t, "ApidGatewayConfDeploy Suite")
+}

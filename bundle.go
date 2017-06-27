@@ -32,88 +32,138 @@ const (
 )
 
 var (
-	markDeploymentFailedAfter time.Duration
-	bundleDownloadConnTimeout time.Duration
-	bundleRetryDelay          = time.Second
-	downloadQueue             = make(chan *DownloadRequest, downloadQueueSize)
-	workerQueue               = make(chan chan *DownloadRequest, concurrentDownloads)
+	bundleMan bundleManagerInterface
 )
 
-// simple doubling back-off
-func createBackoff(retryIn, maxBackOff time.Duration) func() {
-	return func() {
-		log.Debugf("backoff called. will retry in %s.", retryIn)
-		time.Sleep(retryIn)
-		retryIn = retryIn * time.Duration(2)
-		if retryIn > maxBackOff {
-			retryIn = maxBackOff
+type bundleManagerInterface interface {
+	initializeBundleDownloading()
+	queueDownloadRequest(*DataDeployment)
+	enqueueRequest(*DownloadRequest)
+	deleteBundles([]DataDeployment)
+	Close()
+}
+
+type bundleManager struct {
+	concurrentDownloads       int
+	markDeploymentFailedAfter time.Duration
+	bundleDownloadConnTimeout time.Duration
+	bundleRetryDelay          time.Duration
+	bundleCleanupDelay        time.Duration
+	downloadQueue             chan *DownloadRequest
+	isClosed                  *int32
+	workers                   []*BundleDownloader
+}
+
+func (bm *bundleManager) initializeBundleDownloading() {
+	atomic.StoreInt32(bm.isClosed, 0)
+	bm.workers = make([]*BundleDownloader, bm.concurrentDownloads)
+
+	// create workers
+	for i := 0; i < bm.concurrentDownloads; i++ {
+		worker := BundleDownloader{
+			id:       i + 1,
+			workChan: make(chan *DownloadRequest),
 		}
+		bm.workers[i] = &worker
+		worker.Start()
 	}
 }
 
-func queueDownloadRequest(dep DataDeployment) {
+func (bm *bundleManager) queueDownloadRequest(dep *DataDeployment) {
 
-	retryIn := bundleRetryDelay
+	retryIn := bm.bundleRetryDelay
 	maxBackOff := 5 * time.Minute
-	markFailedAt := time.Now().Add(markDeploymentFailedAfter)
+	markFailedAt := time.Now().Add(bm.markDeploymentFailedAfter)
 	req := &DownloadRequest{
 		dep:          dep,
 		bundleFile:   getBundleFile(dep),
 		backoffFunc:  createBackoff(retryIn, maxBackOff),
 		markFailedAt: markFailedAt,
+		connTimeout:  bm.bundleDownloadConnTimeout,
 	}
-	downloadQueue <- req
+	go bm.enqueueRequest(req)
+}
+
+// a blocking method to enqueue download requests
+func (bm *bundleManager) enqueueRequest(r *DownloadRequest) {
+	if atomic.LoadInt32(bm.isClosed) == 1 {
+		return
+	}
+	defer func() {
+		if r := recover(); r != nil {
+			log.Warn("trying to enque requests to closed bundleManager")
+		}
+	}()
+	bm.downloadQueue <- r
+}
+
+func (bm *bundleManager) Close() {
+	atomic.StoreInt32(bm.isClosed, 1)
+	close(bm.downloadQueue)
+}
+
+func (bm *bundleManager) deleteBundles(deletedDeployments []DataDeployment) {
+	log.Debugf("will delete %d old bundles", len(deletedDeployments))
+	go func() {
+		// give clients a minute to avoid conflicts
+		time.Sleep(bm.bundleCleanupDelay)
+		for _, dep := range deletedDeployments {
+			bundleFile := getBundleFile(&dep)
+			log.Debugf("removing old bundle: %v", bundleFile)
+			// TODO Remove from the Database table edgex_blob_available
+			safeDelete(bundleFile)
+		}
+	}()
 }
 
 type DownloadRequest struct {
-	dep          DataDeployment
+	dep          *DataDeployment
 	bundleFile   string
 	backoffFunc  func()
 	markFailedAt time.Time
+	connTimeout  time.Duration
 }
 
-func (r *DownloadRequest) downloadBundle() {
+func (r *DownloadRequest) downloadBundle() error {
 
 	dep := r.dep
-	log.Debugf("starting bundle download attempt for %s: %s", dep.ID, dep.BlobID)
+	log.Debugf("starting bundle download attempt for depId=%s: blobId=%s", dep.ID, dep.BlobID)
 
 	r.checkTimeout()
 
-	tempFile, err := downloadFromURI(dep.BlobID)
-
-	if err == nil {
-		err = os.Rename(tempFile, r.bundleFile)
-		if err != nil {
-			log.Errorf("Unable to rename temp bundle file %s to %s: %s", tempFile, r.bundleFile, err)
-		}
-	}
-
-	if tempFile != "" {
-		go safeDelete(tempFile)
-	}
-
-	if err == nil {
-		blobId := atomic.AddInt64(&gwBlobId, 1)
-		blobIds := strconv.FormatInt(blobId, 10)
-		err = dbMan.updateLocalFsLocation(dep.ID, blobIds, r.bundleFile)
-		if err != nil {
-			dep.GWBlobID = blobIds
-		}
-	}
+	tempFile, err := downloadFromURI(dep.BlobID, r.connTimeout)
 
 	if err != nil {
-		// add myself back into the queue after back off
-		go func() {
-			r.backoffFunc()
-			downloadQueue <- r
-		}()
-		return
+		log.Errorf("Unable to download blob file blobId=%s: %s", dep.BlobID, err)
+		return err
 	}
 
-	log.Debugf("bundle for %s downloaded: %s", dep.ID, dep.BlobID)
+	defer func() {
+		if tempFile != "" {
+			go safeDelete(tempFile)
+		}
+	}()
+
+	err = os.Rename(tempFile, r.bundleFile)
+	if err != nil {
+		log.Errorf("Unable to rename temp blob file %s to %s: %s", tempFile, r.bundleFile, err)
+		return err
+	}
+
+	blobId := atomic.AddInt64(&gwBlobId, 1)
+	blobIds := strconv.FormatInt(blobId, 10)
+	err = dbMan.updateLocalFsLocation(dep.ID, blobIds, r.bundleFile)
+	if err != nil {
+		return err
+	}
+	dep.GWBlobID = blobIds
+
+	log.Debugf("bundle for depId=%s downloaded: blobId=%s", dep.ID, dep.BlobID)
 
 	// send deployments to client
 	deploymentsChanged <- dep.ID
+
+	return nil
 }
 
 func (r *DownloadRequest) checkTimeout() {
@@ -128,15 +178,15 @@ func (r *DownloadRequest) checkTimeout() {
 
 }
 
-func getBundleFile(dep DataDeployment) string {
+func getBundleFile(dep *DataDeployment) string {
 
 	return path.Join(bundlePath, base64.StdEncoding.EncodeToString([]byte(dep.ID)))
 
 }
 
-func getSignedURL(blobId string) (string, error) {
+func getSignedURL(blobId string, bundleDownloadConnTimeout time.Duration) (string, error) {
 
-	blobUri, err := url.Parse(config.GetString(configBlobServerBaseURI))
+	blobUri, err := url.Parse(blobServerURL)
 	if err != nil {
 		log.Panicf("bad url value for config %s: %s", blobUri, err)
 	}
@@ -149,7 +199,7 @@ func getSignedURL(blobId string) (string, error) {
 
 	uri := blobUri.String()
 
-	surl, err := getURIReader(uri)
+	surl, err := getURIReader(uri, bundleDownloadConnTimeout)
 	if err != nil {
 		log.Errorf("Unable to get signed URL from BlobServer %s: %v", uri, err)
 		return "", err
@@ -165,12 +215,12 @@ func getSignedURL(blobId string) (string, error) {
 
 // downloadFromURI involves retrieving the signed URL for the blob, and storing the resource locally
 // after downloading the resource from GCS (via the signed URL)
-func downloadFromURI(blobId string) (tempFileName string, err error) {
+func downloadFromURI(blobId string, bundleDownloadConnTimeout time.Duration) (tempFileName string, err error) {
 
 	var tempFile *os.File
 	log.Debugf("Downloading bundle: %s", blobId)
 
-	uri, err := getSignedURL(blobId)
+	uri, err := getSignedURL(blobId, bundleDownloadConnTimeout)
 	if err != nil {
 		log.Errorf("Unable to get signed URL for blobId {%s}, error : {%v}", blobId, err)
 		return
@@ -185,7 +235,7 @@ func downloadFromURI(blobId string) (tempFileName string, err error) {
 	tempFileName = tempFile.Name()
 
 	var confReader io.ReadCloser
-	confReader, err = getURIReader(uri)
+	confReader, err = getURIReader(uri, bundleDownloadConnTimeout)
 	if err != nil {
 		log.Errorf("Unable to retrieve bundle %s: %v", uri, err)
 		return
@@ -203,7 +253,7 @@ func downloadFromURI(blobId string) (tempFileName string, err error) {
 }
 
 // retrieveBundle retrieves bundle data from a URI
-func getURIReader(uriString string) (io.ReadCloser, error) {
+func getURIReader(uriString string, bundleDownloadConnTimeout time.Duration) (io.ReadCloser, error) {
 
 	client := http.Client{
 		Timeout: bundleDownloadConnTimeout,
@@ -218,62 +268,38 @@ func getURIReader(uriString string) (io.ReadCloser, error) {
 	return res.Body, nil
 }
 
-func initializeBundleDownloading() {
-
-	// create workers
-	for i := 0; i < concurrentDownloads; i++ {
-		worker := BundleDownloader{
-			id:       i + 1,
-			workChan: make(chan *DownloadRequest),
-			quitChan: make(chan bool),
-		}
-		worker.Start()
-	}
-
-	// run dispatcher
-	go func() {
-		for {
-			select {
-			case req := <-downloadQueue:
-				log.Debugf("dispatching downloader for: %s", req.bundleFile)
-				go func() {
-					worker := <-workerQueue
-					log.Debugf("got a worker for: %s", req.bundleFile)
-					worker <- req
-				}()
-			}
-		}
-	}()
-}
-
 type BundleDownloader struct {
 	id       int
 	workChan chan *DownloadRequest
-	quitChan chan bool
+	bm       *bundleManager
 }
 
 func (w *BundleDownloader) Start() {
 	go func() {
 		log.Debugf("started bundle downloader %d", w.id)
-		for {
-			// wait for work
-			workerQueue <- w.workChan
 
-			select {
-			case req := <-w.workChan:
-				log.Debugf("starting download %s", req.bundleFile)
-				req.downloadBundle()
-
-			case <-w.quitChan:
-				log.Debugf("bundle downloader %d stopped", w.id)
-				return
+		for req := range w.bm.downloadQueue {
+			log.Debugf("starting download %s", req.bundleFile)
+			err := req.downloadBundle()
+			if err != nil {
+				go func() {
+					req.backoffFunc()
+					w.bm.enqueueRequest(req)
+				}()
 			}
 		}
+		log.Debugf("bundle downloader %d stopped", w.id)
 	}()
 }
 
-func (w *BundleDownloader) Stop() {
-	go func() {
-		w.quitChan <- true
-	}()
+// simple doubling back-off
+func createBackoff(retryIn, maxBackOff time.Duration) func() {
+	return func() {
+		log.Debugf("backoff called. will retry in %s.", retryIn)
+		time.Sleep(retryIn)
+		retryIn = retryIn * time.Duration(2)
+		if retryIn > maxBackOff {
+			retryIn = maxBackOff
+		}
+	}
 }

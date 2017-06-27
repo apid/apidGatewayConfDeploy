@@ -15,7 +15,6 @@ package apiGatewayConfDeploy
 
 import (
 	"os"
-	"time"
 
 	"database/sql"
 	"github.com/30x/apid-core"
@@ -81,7 +80,7 @@ func startupOnExistingDatabase() {
 		}
 		log.Debugf("Queuing %d deployments for bundle download", len(deployments))
 		for _, dep := range deployments {
-			queueDownloadRequest(dep)
+			go bundleMan.queueDownloadRequest(&dep)
 		}
 	}()
 }
@@ -117,22 +116,13 @@ func processChangeList(changes *common.ChangeList) {
 	}
 
 	for _, dep := range insertedDeployments {
-		queueDownloadRequest(dep)
+		go bundleMan.queueDownloadRequest(&dep)
 	}
 
 	// clean up old bundles
 	if len(deletedDeployments) > 0 {
 		log.Debugf("will delete %d old bundles", len(deletedDeployments))
-		go func() {
-			// give clients a minute to avoid conflicts
-			time.Sleep(bundleCleanupDelay)
-			for _, dep := range deletedDeployments {
-				bundleFile := getBundleFile(dep)
-				log.Debugf("removing old bundle: %v", bundleFile)
-				// TODO Remove from the Database table edgex_blob_available
-				safeDelete(bundleFile)
-			}
-		}()
+		bundleMan.deleteBundles(deletedDeployments)
 	}
 }
 

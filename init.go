@@ -40,18 +40,15 @@ const (
 )
 
 var (
-	services            apid.Services
-	log                 apid.LogService
-	config              apid.ConfigService
-	bundlePath          string
-	debounceDuration    time.Duration
-	bundleCleanupDelay  time.Duration
-	apiServerBaseURI    *url.URL
-	blobServerURL       string
-	apidInstanceID      string
-	apidClusterID       string
-	downloadQueueSize   int
-	concurrentDownloads int
+	services         apid.Services
+	log              apid.LogService
+	config           apid.ConfigService
+	bundlePath       string
+	debounceDuration time.Duration
+	apiServerBaseURI *url.URL
+	blobServerURL    string
+	apidInstanceID   string
+	apidClusterID    string
 )
 
 func init() {
@@ -102,29 +99,39 @@ func initPlugin(s apid.Services) (apid.PluginData, error) {
 		return pluginData, fmt.Errorf("%s must be a positive duration", configDebounceDuration)
 	}
 
-	bundleCleanupDelay = config.GetDuration(configBundleCleanupDelay)
+	bundleCleanupDelay := config.GetDuration(configBundleCleanupDelay)
 	if bundleCleanupDelay < time.Millisecond {
 		return pluginData, fmt.Errorf("%s must be a positive duration", configBundleCleanupDelay)
 	}
 
-	markDeploymentFailedAfter = config.GetDuration(configMarkDeployFailedAfter)
+	markDeploymentFailedAfter := config.GetDuration(configMarkDeployFailedAfter)
 	if markDeploymentFailedAfter < time.Millisecond {
 		return pluginData, fmt.Errorf("%s must be a positive duration", configMarkDeployFailedAfter)
 	}
 
-	bundleDownloadConnTimeout = config.GetDuration(configDownloadConnTimeout)
+	bundleDownloadConnTimeout := config.GetDuration(configDownloadConnTimeout)
 	if bundleDownloadConnTimeout < time.Millisecond {
 		return pluginData, fmt.Errorf("%s must be a positive duration", configDownloadConnTimeout)
 	}
 
+	concurrentDownloads := config.GetInt(configConcurrentDownloads)
+	downloadQueueSize := config.GetInt(configDownloadQueueSize)
+	bundleMan = &bundleManager{
+		concurrentDownloads:       concurrentDownloads,
+		markDeploymentFailedAfter: markDeploymentFailedAfter,
+		bundleDownloadConnTimeout: bundleDownloadConnTimeout,
+		bundleRetryDelay:          time.Second,
+		bundleCleanupDelay:        bundleCleanupDelay,
+		downloadQueue:             make(chan *DownloadRequest, downloadQueueSize),
+		isClosed:                  new(int32),
+	}
+
 	dbMan = &dbManager{
-		data: services.Data(),
+		data:  services.Data(),
 		dbMux: sync.RWMutex{},
 	}
 
 	blobServerURL = config.GetString(configBlobServerBaseURI)
-	concurrentDownloads = config.GetInt(configConcurrentDownloads)
-	downloadQueueSize = config.GetInt(configDownloadQueueSize)
 	relativeBundlePath := config.GetString(configBundleDirKey)
 	storagePath := config.GetString("local_storage_path")
 	bundlePath = path.Join(storagePath, relativeBundlePath)
@@ -133,7 +140,7 @@ func initPlugin(s apid.Services) (apid.PluginData, error) {
 	}
 	log.Infof("Bundle directory path is %s", bundlePath)
 
-	initializeBundleDownloading()
+	bundleMan.initializeBundleDownloading()
 
 	go distributeEvents()
 

@@ -21,7 +21,7 @@ import (
 )
 
 var (
-	dbMan dbManagerInterface
+	dbMan    dbManagerInterface
 	gwBlobId int64
 )
 
@@ -47,7 +47,6 @@ type SQLExec interface {
 	Exec(query string, args ...interface{}) (sql.Result, error)
 }
 
-
 type dbManagerInterface interface {
 	setDbVersion(string)
 	initDb() error
@@ -57,11 +56,10 @@ type dbManagerInterface interface {
 	getLocalFSLocation(string) (string, error)
 }
 
-
 type dbManager struct {
-	data apid.DataService
-	db apid.DB
-	dbMux    sync.RWMutex
+	data  apid.DataService
+	db    apid.DB
+	dbMux sync.RWMutex
 }
 
 func (dbc *dbManager) setDbVersion(version string) {
@@ -80,7 +78,7 @@ func (dbc *dbManager) getDb() apid.DB {
 	return dbc.db
 }
 
-func (dbc *dbManager) initDb() error{
+func (dbc *dbManager) initDb() error {
 	_, err := dbc.getDb().Exec(`
 	CREATE TABLE IF NOT EXISTS edgex_blob_available (
    		gwblobid integer primary key,
@@ -99,7 +97,6 @@ func (dbc *dbManager) initDb() error{
 
 // getUnreadyDeployments() returns array of resources that are not yet to be processed
 func (dbc *dbManager) getUnreadyDeployments() (deployments []DataDeployment, err error) {
-
 
 	rows, err := dbc.getDb().Query(`
 	SELECT project_runtime_blob_metadata.id, org_id, env_id, name, revision, blob_id, resource_blob_id
@@ -132,7 +129,6 @@ func (dbc *dbManager) getUnreadyDeployments() (deployments []DataDeployment, err
 
 // getDeployments()
 func (dbc *dbManager) getReadyDeployments() (deployments []DataDeployment, err error) {
-
 
 	rows, err := dbc.getDb().Query(`
 	SELECT a.id, a.org_id, a.env_id, a.name, a.type, a.revision, a.blob_id,

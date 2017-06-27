@@ -293,7 +293,7 @@ func sendDeployments(w http.ResponseWriter, dataDeps []DataDeployment, eTag stri
 	for _, d := range dataDeps {
 		apiDepDetails = append(apiDepDetails, ApiDeploymentDetails{
 			Self:           apiDeps.Self + "/" + d.ID,
-			Name:		d.Name,
+			Name:           d.Name,
 			Type:           d.Type,
 			Org:            d.OrgID,
 			Env:            d.EnvID,
@@ -332,7 +332,7 @@ func getETag() string {
 }
 
 // TODO
-func getDeploymentScope() string{
+func getDeploymentScope() string {
 	return ""
 }
 
@@ -350,4 +350,3 @@ func convertTime(t string) string {
 	log.Error("convertTime: Unsupported time format: " + t)
 	return t
 }
-
