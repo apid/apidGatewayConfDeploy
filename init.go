@@ -114,22 +114,26 @@ func initPlugin(s apid.Services) (apid.PluginData, error) {
 		return pluginData, fmt.Errorf("%s must be a positive duration", configDownloadConnTimeout)
 	}
 
-	concurrentDownloads := config.GetInt(configConcurrentDownloads)
-	downloadQueueSize := config.GetInt(configDownloadQueueSize)
-	bundleMan = &bundleManager{
-		concurrentDownloads:       concurrentDownloads,
-		markDeploymentFailedAfter: markDeploymentFailedAfter,
-		bundleDownloadConnTimeout: bundleDownloadConnTimeout,
-		bundleRetryDelay:          time.Second,
-		bundleCleanupDelay:        bundleCleanupDelay,
-		downloadQueue:             make(chan *DownloadRequest, downloadQueueSize),
-		isClosed:                  new(int32),
-	}
+	// initialize db manager
 
-	dbMan = &dbManager{
+	dbMan := &dbManager{
 		data:  services.Data(),
 		dbMux: sync.RWMutex{},
 	}
+
+	// initialize api manager
+
+	apiMan := &apiManager{
+		dbMan:               dbMan,
+		deploymentsEndpoint: deploymentsEndpoint,
+		blobEndpoint:        blobEndpoint,
+		eTag:                0,
+		deploymentsChanged:  make(chan interface{}, 5),
+		addSubscriber:       make(chan chan deploymentsResult),
+		removeSubscriber:    make(chan chan deploymentsResult),
+	}
+
+	// initialize bundle manager
 
 	blobServerURL = config.GetString(configBlobServerBaseURI)
 	relativeBundlePath := config.GetString(configBundleDirKey)
@@ -139,14 +143,30 @@ func initPlugin(s apid.Services) (apid.PluginData, error) {
 		return pluginData, fmt.Errorf("Failed bundle directory creation: %v", err)
 	}
 	log.Infof("Bundle directory path is %s", bundlePath)
+	concurrentDownloads := config.GetInt(configConcurrentDownloads)
+	downloadQueueSize := config.GetInt(configDownloadQueueSize)
+	bundleMan := &bundleManager{
+		dbMan:                     dbMan,
+		apiMan:                    apiMan,
+		concurrentDownloads:       concurrentDownloads,
+		markDeploymentFailedAfter: markDeploymentFailedAfter,
+		bundleDownloadConnTimeout: bundleDownloadConnTimeout,
+		bundleRetryDelay:          time.Second,
+		bundleCleanupDelay:        bundleCleanupDelay,
+		downloadQueue:             make(chan *DownloadRequest, downloadQueueSize),
+		isClosed:                  new(int32),
+	}
 
 	bundleMan.initializeBundleDownloading()
+	go apiMan.distributeEvents()
 
-	go distributeEvents()
-
-	initListener(services)
+	initListener(services, dbMan, apiMan, bundleMan)
 
 	log.Debug("end init")
 
 	return pluginData, nil
+}
+
+func setServices() {
+
 }

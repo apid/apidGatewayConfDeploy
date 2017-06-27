@@ -28,8 +28,14 @@ const (
 
 var apiInitialized bool
 
-func initListener(services apid.Services) {
-	services.Events().Listen(APIGEE_SYNC_EVENT, &apigeeSyncHandler{})
+func initListener(services apid.Services, dbMan dbManagerInterface, apiMan apiManagerInterface, bundleMan bundleManagerInterface) {
+	handler := &apigeeSyncHandler{
+		dbMan:     dbMan,
+		apiMan:    apiMan,
+		bundleMan: bundleMan,
+	}
+
+	services.Events().Listen(APIGEE_SYNC_EVENT, handler)
 }
 
 type bundleConfigJson struct {
@@ -40,6 +46,9 @@ type bundleConfigJson struct {
 }
 
 type apigeeSyncHandler struct {
+	dbMan     dbManagerInterface
+	apiMan    apiManagerInterface
+	bundleMan bundleManagerInterface
 }
 
 func (h *apigeeSyncHandler) String() string {
@@ -49,43 +58,43 @@ func (h *apigeeSyncHandler) String() string {
 func (h *apigeeSyncHandler) Handle(e apid.Event) {
 
 	if changeSet, ok := e.(*common.ChangeList); ok {
-		processChangeList(changeSet)
+		h.processChangeList(changeSet)
 	} else if snapData, ok := e.(*common.Snapshot); ok {
-		processSnapshot(snapData)
+		h.processSnapshot(snapData)
 	} else {
 		log.Debugf("Received invalid event. Ignoring. %v", e)
 	}
 }
 
-func processSnapshot(snapshot *common.Snapshot) {
+func (h *apigeeSyncHandler) processSnapshot(snapshot *common.Snapshot) {
 
 	log.Debugf("Snapshot received. Switching to DB version: %s", snapshot.SnapshotInfo)
 
-	dbMan.setDbVersion(snapshot.SnapshotInfo)
+	h.dbMan.setDbVersion(snapshot.SnapshotInfo)
 
-	startupOnExistingDatabase()
+	h.startupOnExistingDatabase()
 	if !apiInitialized {
-		InitAPI()
+		h.apiMan.InitAPI()
 	}
 	log.Debug("Snapshot processed")
 }
 
-func startupOnExistingDatabase() {
+func (h *apigeeSyncHandler) startupOnExistingDatabase() {
 	// start bundle downloads that didn't finish
 	go func() {
-		deployments, err := dbMan.getUnreadyDeployments()
+		deployments, err := h.dbMan.getUnreadyDeployments()
 
 		if err != nil && err != sql.ErrNoRows {
 			log.Panicf("unable to query database for unready deployments: %v", err)
 		}
 		log.Debugf("Queuing %d deployments for bundle download", len(deployments))
 		for _, dep := range deployments {
-			go bundleMan.queueDownloadRequest(&dep)
+			go h.bundleMan.queueDownloadRequest(&dep)
 		}
 	}()
 }
 
-func processChangeList(changes *common.ChangeList) {
+func (h *apigeeSyncHandler) processChangeList(changes *common.ChangeList) {
 
 	log.Debugf("Processing changes")
 	// changes have been applied to DB
@@ -112,17 +121,17 @@ func processChangeList(changes *common.ChangeList) {
 	}
 
 	for _, d := range deletedDeployments {
-		deploymentsChanged <- d.ID
+		h.apiMan.addChangedDeployment(d.ID)
 	}
 
 	for _, dep := range insertedDeployments {
-		go bundleMan.queueDownloadRequest(&dep)
+		go h.bundleMan.queueDownloadRequest(&dep)
 	}
 
 	// clean up old bundles
 	if len(deletedDeployments) > 0 {
 		log.Debugf("will delete %d old bundles", len(deletedDeployments))
-		bundleMan.deleteBundles(deletedDeployments)
+		h.bundleMan.deleteBundles(deletedDeployments)
 	}
 }
 

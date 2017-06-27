@@ -47,18 +47,15 @@ const (
 	changeTimeFormat = "2006-01-02 15:04:05.999"
 )
 
+const (
+	kindCollection = "Collection"
+)
+
 type deploymentsResult struct {
 	deployments []DataDeployment
 	err         error
 	eTag        string
 }
-
-var (
-	deploymentsChanged = make(chan interface{}, 5)
-	addSubscriber      = make(chan chan deploymentsResult)
-	removeSubscriber   = make(chan chan deploymentsResult)
-	eTag               int64
-)
 
 type errorResponse struct {
 	ErrorCode int    `json:"errorCode"`
@@ -87,15 +84,36 @@ type ApiDeploymentResponse struct {
 }
 
 const deploymentsEndpoint = "/configurations"
-const BlobEndpoint = "/blob/{blobId}"
+const blobEndpointPath = "/blob"
+const blobEndpoint = blobEndpointPath + "/{blobId}"
 
-func InitAPI() {
-	log.Debug("API endpoints initialized")
-	services.API().HandleFunc(deploymentsEndpoint, apiGetCurrentDeployments).Methods("GET")
-	services.API().HandleFunc(BlobEndpoint, apiReturnBlobData).Methods("GET")
+type apiManagerInterface interface {
+	InitAPI()
+	addChangedDeployment(string)
+	distributeEvents()
 }
 
-func writeError(w http.ResponseWriter, status int, code int, reason string) {
+type apiManager struct {
+	dbMan               dbManagerInterface
+	deploymentsEndpoint string
+	blobEndpoint        string
+	eTag                int64
+	deploymentsChanged  chan interface{}
+	addSubscriber       chan chan deploymentsResult
+	removeSubscriber    chan chan deploymentsResult
+}
+
+func (a *apiManager) InitAPI() {
+	log.Debug("API endpoints initialized")
+	services.API().HandleFunc(a.deploymentsEndpoint, a.apiGetCurrentDeployments).Methods("GET")
+	services.API().HandleFunc(a.blobEndpoint, a.apiReturnBlobData).Methods("GET")
+}
+
+func (a *apiManager) addChangedDeployment(id string) {
+	a.deploymentsChanged <- id
+}
+
+func (a *apiManager) writeError(w http.ResponseWriter, status int, code int, reason string) {
 	w.WriteHeader(status)
 	e := errorResponse{
 		ErrorCode: code,
@@ -110,11 +128,11 @@ func writeError(w http.ResponseWriter, status int, code int, reason string) {
 	log.Debugf("sending %d error to client: %s", status, reason)
 }
 
-func writeInternalError(w http.ResponseWriter, err string) {
-	writeError(w, http.StatusInternalServerError, API_ERR_INTERNAL, err)
+func (a *apiManager) writeInternalError(w http.ResponseWriter, err string) {
+	a.writeError(w, http.StatusInternalServerError, API_ERR_INTERNAL, err)
 }
 
-func debounce(in chan interface{}, out chan []interface{}, window time.Duration) {
+func (a *apiManager) debounce(in chan interface{}, out chan []interface{}, window time.Duration) {
 	send := func(toSend []interface{}) {
 		if toSend != nil {
 			log.Debugf("debouncer sending: %v", toSend)
@@ -141,11 +159,11 @@ func debounce(in chan interface{}, out chan []interface{}, window time.Duration)
 	}
 }
 
-func distributeEvents() {
+func (a *apiManager) distributeEvents() {
 	subscribers := make(map[chan deploymentsResult]bool)
 	deliverDeployments := make(chan []interface{}, 1)
 
-	go debounce(deploymentsChanged, deliverDeployments, debounceDuration)
+	go a.debounce(a.deploymentsChanged, deliverDeployments, debounceDuration)
 
 	for {
 		select {
@@ -156,46 +174,46 @@ func distributeEvents() {
 			subs := subscribers
 			subscribers = make(map[chan deploymentsResult]bool)
 			go func() {
-				eTag := incrementETag()
-				deployments, err := dbMan.getUnreadyDeployments()
+				eTag := a.incrementETag()
+				deployments, err := a.dbMan.getUnreadyDeployments()
 				log.Debugf("delivering deployments to %d subscribers", len(subs))
 				for subscriber := range subs {
 					log.Debugf("delivering to: %v", subscriber)
 					subscriber <- deploymentsResult{deployments, err, eTag}
 				}
 			}()
-		case subscriber := <-addSubscriber:
+		case subscriber := <-a.addSubscriber:
 			log.Debugf("Add subscriber: %v", subscriber)
 			subscribers[subscriber] = true
-		case subscriber := <-removeSubscriber:
+		case subscriber := <-a.removeSubscriber:
 			log.Debugf("Remove subscriber: %v", subscriber)
 			delete(subscribers, subscriber)
 		}
 	}
 }
 
-func apiReturnBlobData(w http.ResponseWriter, r *http.Request) {
+func (a *apiManager) apiReturnBlobData(w http.ResponseWriter, r *http.Request) {
 
 	vars := mux.Vars(r)
 	blobId := vars["blobId"]
-	fs, err := dbMan.getLocalFSLocation(blobId)
+	fs, err := a.dbMan.getLocalFSLocation(blobId)
 	if err != nil {
-		writeInternalError(w, "BlobId "+blobId+" has no mapping blob file")
+		a.writeInternalError(w, "BlobId "+blobId+" has no mapping blob file")
 		return
 	}
 	byte, err := ioutil.ReadFile(fs)
 	if err != nil {
-		writeInternalError(w, err.Error())
+		a.writeInternalError(w, err.Error())
 		return
 	}
 	_, err = io.Copy(w, bytes.NewReader(byte))
 	if err != nil {
-		writeInternalError(w, err.Error())
+		a.writeInternalError(w, err.Error())
 	}
 
 }
 
-func apiGetCurrentDeployments(w http.ResponseWriter, r *http.Request) {
+func (a *apiManager) apiGetCurrentDeployments(w http.ResponseWriter, r *http.Request) {
 
 	// If returning without a bundle (immediately or after timeout), status = 404
 	// If returning If-None-Match value is equal to current deployment, status = 304
@@ -209,7 +227,7 @@ func apiGetCurrentDeployments(w http.ResponseWriter, r *http.Request) {
 		var err error
 		timeout, err = strconv.Atoi(b)
 		if err != nil {
-			writeError(w, http.StatusBadRequest, API_ERR_BAD_BLOCK, "bad block value, must be number of seconds")
+			a.writeError(w, http.StatusBadRequest, API_ERR_BAD_BLOCK, "bad block value, must be number of seconds")
 			return
 		}
 	}
@@ -222,7 +240,7 @@ func apiGetCurrentDeployments(w http.ResponseWriter, r *http.Request) {
 	log.Debugf("if-none-match: %s", ifNoneMatch)
 
 	// send unmodified if matches prior eTag and no timeout
-	eTag := getETag()
+	eTag := a.getETag()
 	if eTag == ifNoneMatch && timeout == 0 {
 		w.WriteHeader(http.StatusNotModified)
 		return
@@ -230,7 +248,7 @@ func apiGetCurrentDeployments(w http.ResponseWriter, r *http.Request) {
 
 	// send results if different eTag
 	if eTag != ifNoneMatch {
-		sendReadyDeployments(w)
+		a.sendReadyDeployments(w)
 		return
 	}
 
@@ -238,7 +256,7 @@ func apiGetCurrentDeployments(w http.ResponseWriter, r *http.Request) {
 	var newDeploymentsChannel chan deploymentsResult
 	if timeout > 0 && ifNoneMatch != "" {
 		newDeploymentsChannel = make(chan deploymentsResult, 1)
-		addSubscriber <- newDeploymentsChannel
+		a.addSubscriber <- newDeploymentsChannel
 	}
 
 	log.Debug("Blocking request... Waiting for new Deployments.")
@@ -246,49 +264,39 @@ func apiGetCurrentDeployments(w http.ResponseWriter, r *http.Request) {
 	select {
 	case result := <-newDeploymentsChannel:
 		if result.err != nil {
-			writeInternalError(w, "Database error")
+			a.writeInternalError(w, "Database error")
 		} else {
-			sendDeployments(w, result.deployments, result.eTag)
+			a.sendDeployments(w, result.deployments, result.eTag)
 		}
 
 	case <-time.After(time.Duration(timeout) * time.Second):
-		removeSubscriber <- newDeploymentsChannel
+		a.removeSubscriber <- newDeploymentsChannel
 		log.Debug("Blocking deployment request timed out.")
 		if ifNoneMatch != "" {
 			w.WriteHeader(http.StatusNotModified)
 		} else {
-			sendReadyDeployments(w)
+			a.sendReadyDeployments(w)
 		}
 	}
 }
 
-func sendReadyDeployments(w http.ResponseWriter) {
-	eTag := getETag()
-	deployments, err := dbMan.getReadyDeployments()
+func (a *apiManager) sendReadyDeployments(w http.ResponseWriter) {
+	eTag := a.getETag()
+	deployments, err := a.dbMan.getReadyDeployments()
 	if err != nil {
-		writeInternalError(w, "Database error")
+		a.writeInternalError(w, "Database error")
 		return
 	}
-	sendDeployments(w, deployments, eTag)
+	a.sendDeployments(w, deployments, eTag)
 }
 
-func getHttpHost() string {
-	// apid-core has to set this according to the protocol apid is to be run: http/https
-	proto := config.GetString("protocol_type")
-	if proto == "" {
-		proto = "http"
-	}
-	proto = proto + "://" + config.GetString("api_listen")
-	return proto
-}
-
-func sendDeployments(w http.ResponseWriter, dataDeps []DataDeployment, eTag string) {
+func (a *apiManager) sendDeployments(w http.ResponseWriter, dataDeps []DataDeployment, eTag string) {
 
 	apiDeps := ApiDeploymentResponse{}
 	apiDepDetails := make([]ApiDeploymentDetails, 0)
 
-	apiDeps.Kind = "Collections"
-	apiDeps.Self = getHttpHost() + "/configurations"
+	apiDeps.Kind = kindCollection
+	apiDeps.Self = getHttpHost() + a.deploymentsEndpoint
 
 	for _, d := range dataDeps {
 		apiDepDetails = append(apiDepDetails, ApiDeploymentDetails{
@@ -297,7 +305,7 @@ func sendDeployments(w http.ResponseWriter, dataDeps []DataDeployment, eTag stri
 			Type:           d.Type,
 			Org:            d.OrgID,
 			Env:            d.EnvID,
-			Scope:          getDeploymentScope(),
+			Scope:          a.getDeploymentScope(),
 			Revision:       d.Revision,
 			BlobId:         d.GWBlobID,
 			BlobURL:        d.BlobURL,
@@ -321,18 +329,18 @@ func sendDeployments(w http.ResponseWriter, dataDeps []DataDeployment, eTag stri
 }
 
 // call whenever the list of deployments changes
-func incrementETag() string {
-	e := atomic.AddInt64(&eTag, 1)
+func (a *apiManager) incrementETag() string {
+	e := atomic.AddInt64(&a.eTag, 1)
 	return strconv.FormatInt(e, 10)
 }
 
-func getETag() string {
-	e := atomic.LoadInt64(&eTag)
+func (a *apiManager) getETag() string {
+	e := atomic.LoadInt64(&a.eTag)
 	return strconv.FormatInt(e, 10)
 }
 
 // TODO
-func getDeploymentScope() string {
+func (a *apiManager) getDeploymentScope() string {
 	return ""
 }
 
@@ -349,4 +357,14 @@ func convertTime(t string) string {
 	}
 	log.Error("convertTime: Unsupported time format: " + t)
 	return t
+}
+
+func getHttpHost() string {
+	// apid-core has to set this according to the protocol apid is to be run: http/https
+	proto := config.GetString("protocol_type")
+	if proto == "" {
+		proto = "http"
+	}
+	proto = proto + "://" + config.GetString("api_listen")
+	return proto
 }

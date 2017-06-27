@@ -31,10 +31,6 @@ const (
 	BLOBSTORE_URI = "/v1/blobstore/signeduri"
 )
 
-var (
-	bundleMan bundleManagerInterface
-)
-
 type bundleManagerInterface interface {
 	initializeBundleDownloading()
 	queueDownloadRequest(*DataDeployment)
@@ -44,6 +40,8 @@ type bundleManagerInterface interface {
 }
 
 type bundleManager struct {
+	dbMan                     dbManagerInterface
+	apiMan                    apiManagerInterface
 	concurrentDownloads       int
 	markDeploymentFailedAfter time.Duration
 	bundleDownloadConnTimeout time.Duration
@@ -63,6 +61,7 @@ func (bm *bundleManager) initializeBundleDownloading() {
 		worker := BundleDownloader{
 			id:       i + 1,
 			workChan: make(chan *DownloadRequest),
+			bm:       bm,
 		}
 		bm.workers[i] = &worker
 		worker.Start()
@@ -75,6 +74,7 @@ func (bm *bundleManager) queueDownloadRequest(dep *DataDeployment) {
 	maxBackOff := 5 * time.Minute
 	markFailedAt := time.Now().Add(bm.markDeploymentFailedAfter)
 	req := &DownloadRequest{
+		bm:           bm,
 		dep:          dep,
 		bundleFile:   getBundleFile(dep),
 		backoffFunc:  createBackoff(retryIn, maxBackOff),
@@ -117,6 +117,7 @@ func (bm *bundleManager) deleteBundles(deletedDeployments []DataDeployment) {
 }
 
 type DownloadRequest struct {
+	bm           *bundleManager
 	dep          *DataDeployment
 	bundleFile   string
 	backoffFunc  func()
@@ -152,7 +153,7 @@ func (r *DownloadRequest) downloadBundle() error {
 
 	blobId := atomic.AddInt64(&gwBlobId, 1)
 	blobIds := strconv.FormatInt(blobId, 10)
-	err = dbMan.updateLocalFsLocation(dep.ID, blobIds, r.bundleFile)
+	err = r.bm.dbMan.updateLocalFsLocation(dep.ID, blobIds, r.bundleFile)
 	if err != nil {
 		return err
 	}
@@ -161,7 +162,7 @@ func (r *DownloadRequest) downloadBundle() error {
 	log.Debugf("bundle for depId=%s downloaded: blobId=%s", dep.ID, dep.BlobID)
 
 	// send deployments to client
-	deploymentsChanged <- dep.ID
+	r.bm.apiMan.addChangedDeployment(dep.ID)
 
 	return nil
 }

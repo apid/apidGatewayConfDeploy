@@ -21,7 +21,6 @@ import (
 )
 
 var (
-	dbMan    dbManagerInterface
 	gwBlobId int64
 )
 
@@ -163,7 +162,7 @@ func (dbc *dbManager) getReadyDeployments() (deployments []DataDeployment, err e
 
 func (dbc *dbManager) updateLocalFsLocation(depID, bundleId, localFsLocation string) error {
 
-	access_url := getHttpHost() + "/blob/" + bundleId
+	access_url := getHttpHost() + blobEndpointPath + "/" + bundleId
 	stmt, err := dbc.getDb().Prepare(`
 		INSERT INTO edgex_blob_available (runtime_meta_id, gwblobid, local_fs_location, access_url)
 			VALUES (?, ?, ?, ?)`)
