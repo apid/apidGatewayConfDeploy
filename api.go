@@ -20,6 +20,7 @@ import (
 	"io"
 	"io/ioutil"
 	"net/http"
+	"net/url"
 	"strconv"
 	"sync/atomic"
 	"time"
@@ -63,18 +64,17 @@ type errorResponse struct {
 }
 
 type ApiDeploymentDetails struct {
-	Self           string `json:"self"`
-	Name           string `json:"name"`
-	Type           string `json:"type"`
-	Org            string `json:"organization"`
-	Env            string `json:"environment"`
-	Scope          string `json:"scope"`
-	Revision       string `json:"revision"`
-	BlobId         string `json:"blobId"`
-	BlobURL        string `json:"bloburl"`
-	ResourceBlobId string `json:"resourceBlobId"`
-	Created        string `json:"created"`
-	Updated        string `json:"updated"`
+	Self            string `json:"self"`
+	Name            string `json:"name"`
+	Type            string `json:"type"`
+	Revision        string `json:"revision"`
+	BeanBlobUrl     string `json:"beanBlob"`
+	Org             string `json:"orgId"`
+	Env             string `json:"envId"`
+	ResourceBlobUrl string `json:"resourceBlob"`
+	Path            string `json:"path"`
+	Created         string `json:"created"`
+	Updated         string `json:"updated"`
 }
 
 type ApiDeploymentResponse struct {
@@ -83,14 +83,16 @@ type ApiDeploymentResponse struct {
 	ApiDeploymentsResponse []ApiDeploymentDetails `json:"contents"`
 }
 
-const deploymentsEndpoint = "/configurations"
-const blobEndpointPath = "/blob"
-const blobEndpoint = blobEndpointPath + "/{blobId}"
+const (
+	deploymentsEndpoint = "/configurations"
+	blobEndpointPath    = "/blob"
+	blobEndpoint        = blobEndpointPath + "/{blobId}"
+)
 
 type apiManagerInterface interface {
 	InitAPI()
 	addChangedDeployment(string)
-	distributeEvents()
+	//distributeEvents()
 }
 
 type apiManager struct {
@@ -159,6 +161,8 @@ func (a *apiManager) debounce(in chan interface{}, out chan []interface{}, windo
 	}
 }
 
+//TODO get notified when deployments ready
+/*
 func (a *apiManager) distributeEvents() {
 	subscribers := make(map[chan deploymentsResult]bool)
 	deliverDeployments := make(chan []interface{}, 1)
@@ -191,6 +195,7 @@ func (a *apiManager) distributeEvents() {
 		}
 	}
 }
+*/
 
 func (a *apiManager) apiReturnBlobData(w http.ResponseWriter, r *http.Request) {
 
@@ -255,8 +260,9 @@ func (a *apiManager) apiGetCurrentDeployments(w http.ResponseWriter, r *http.Req
 	// otherwise, subscribe to any new deployment changes
 	var newDeploymentsChannel chan deploymentsResult
 	if timeout > 0 && ifNoneMatch != "" {
-		newDeploymentsChannel = make(chan deploymentsResult, 1)
-		a.addSubscriber <- newDeploymentsChannel
+		//TODO handle block
+		//newDeploymentsChannel = make(chan deploymentsResult, 1)
+		//a.addSubscriber <- newDeploymentsChannel
 	}
 
 	log.Debug("Blocking request... Waiting for new Deployments.")
@@ -300,18 +306,17 @@ func (a *apiManager) sendDeployments(w http.ResponseWriter, dataDeps []DataDeplo
 
 	for _, d := range dataDeps {
 		apiDepDetails = append(apiDepDetails, ApiDeploymentDetails{
-			Self:           apiDeps.Self + "/" + d.ID,
-			Name:           d.Name,
-			Type:           d.Type,
-			Org:            d.OrgID,
-			Env:            d.EnvID,
-			Scope:          a.getDeploymentScope(),
-			Revision:       d.Revision,
-			BlobId:         d.BlobID,
-			BlobURL:        d.BlobURL,
-			ResourceBlobId: d.BlobResourceID,
-			Created:        convertTime(d.Created),
-			Updated:        convertTime(d.Updated),
+			Self:            apiDeps.Self + "/" + d.ID,
+			Name:            d.Name,
+			Type:            d.Type,
+			Revision:        d.Revision,
+			BeanBlobUrl:     a.getBlobUrl(d.BlobID),
+			Org:             d.OrgID,
+			Env:             d.EnvID,
+			ResourceBlobUrl: a.getBlobUrl(d.BlobResourceID),
+			Path:            d.Path,
+			Created:         convertTime(d.Created),
+			Updated:         convertTime(d.Updated),
 		})
 	}
 	apiDeps.ApiDeploymentsResponse = apiDepDetails
@@ -339,9 +344,12 @@ func (a *apiManager) getETag() string {
 	return strconv.FormatInt(e, 10)
 }
 
-// TODO
-func (a *apiManager) getDeploymentScope() string {
-	return ""
+// escape the blobId into url
+func (a *apiManager) getBlobUrl(blobId string) string {
+	if blobId == "" {
+		return ""
+	}
+	return getHttpHost() + "/" + url.PathEscape(blobId)
 }
 
 func convertTime(t string) string {
@@ -361,10 +369,10 @@ func convertTime(t string) string {
 
 func getHttpHost() string {
 	// apid-core has to set this according to the protocol apid is to be run: http/https
-	proto := config.GetString("protocol_type")
+	proto := config.GetString(configProtocol)
 	if proto == "" {
 		proto = "http"
 	}
-	proto = proto + "://" + config.GetString("api_listen")
+	proto = proto + "://" + config.GetString(configAPIListen)
 	return proto
 }

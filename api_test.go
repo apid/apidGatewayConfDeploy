@@ -29,7 +29,8 @@ import (
 )
 
 const (
-	testUrl = "http://127.0.0.1:9000"
+	testUrl    = "http://127.0.0.1:9000"
+	testBlobId = "gcs:SHA-512:39ca7ae89bb9468af34df8bc873748b4035210c91bcc01359c092c1d51364b5f3df06bc69a40621acfaa46791af9ea41bc0f3429a84738ba1a7c8d394859601a"
 )
 
 var _ = Describe("api", func() {
@@ -269,36 +270,34 @@ func makeTestDeployment() *DataDeployment {
 		ID:             GenerateUUID(),
 		OrgID:          GenerateUUID(),
 		EnvID:          GenerateUUID(),
+		BlobID:         testBlobId,
+		BlobResourceID: "",
 		Type:           "virtual-host",
 		Name:           "vh-secure",
 		Revision:       "1",
-		BlobID:         GenerateUUID(),
-		GWBlobID:       GenerateUUID(),
-		BlobResourceID: GenerateUUID(),
-		Updated:        time.Now().Format(time.RFC3339),
-		UpdatedBy:      "haoming@google.com",
+		Path:           "/organizations/Org1/",
 		Created:        time.Now().Format(time.RFC3339),
 		CreatedBy:      "haoming@google.com",
+		Updated:        time.Now().Format(time.RFC3339),
+		UpdatedBy:      "haoming@google.com",
 		BlobFSLocation: "BlobFSLocation",
-		BlobURL:        "http://localhost:6666/testBlobURL",
 	}
 	return dep
 }
 
 func makeExpectedDetail(dep *DataDeployment, self string) *ApiDeploymentDetails {
 	detail := &ApiDeploymentDetails{
-		Self:           self + "/" + dep.ID,
-		Name:           dep.Name,
-		Type:           dep.Type,
-		Org:            dep.OrgID,
-		Env:            dep.EnvID,
-		Scope:          "",
-		Revision:       dep.Revision,
-		BlobId:         dep.BlobID,
-		BlobURL:        dep.BlobURL,
-		ResourceBlobId: dep.BlobResourceID,
-		Created:        dep.Created,
-		Updated:        dep.Updated,
+		Self:            self + "/" + dep.ID,
+		Name:            dep.Name,
+		Type:            dep.Type,
+		Revision:        dep.Revision,
+		BeanBlobUrl:     getHttpHost() + "/" + testBlobId,
+		Org:             dep.OrgID,
+		Env:             dep.EnvID,
+		ResourceBlobUrl: "",
+		Path:            dep.Path,
+		Created:         dep.Created,
+		Updated:         dep.Updated,
 	}
 	return detail
 }
@@ -324,7 +323,7 @@ func (d *dummyDbManager) getReadyDeployments() ([]DataDeployment, error) {
 	return d.readyDeployments, nil
 }
 
-func (d *dummyDbManager) updateLocalFsLocation(string, string, string) error {
+func (d *dummyDbManager) updateLocalFsLocation(string, string) error {
 	return nil
 }
 

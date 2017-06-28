@@ -79,9 +79,13 @@ func (h *apigeeSyncHandler) processSnapshot(snapshot *common.Snapshot) {
 	log.Debug("Snapshot processed")
 }
 
+// TODO make it work with new schema
 func (h *apigeeSyncHandler) startupOnExistingDatabase() {
 	// start bundle downloads that didn't finish
 	go func() {
+		// create edgex_blob_available table
+		h.dbMan.initDb()
+
 		deployments, err := h.dbMan.getUnreadyDeployments()
 
 		if err != nil && err != sql.ErrNoRows {
@@ -131,7 +135,8 @@ func (h *apigeeSyncHandler) processChangeList(changes *common.ChangeList) {
 	// clean up old bundles
 	if len(deletedDeployments) > 0 {
 		log.Debugf("will delete %d old bundles", len(deletedDeployments))
-		h.bundleMan.deleteBundles(deletedDeployments)
+		//TODO delete bundles for deleted deployments
+		//h.bundleMan.deleteBundles(deletedDeployments)
 	}
 }
 
@@ -153,6 +158,7 @@ func dataDeploymentFromRow(row common.Row) (d DataDeployment) {
 	return
 }
 
+// TODO delete from file system
 func safeDelete(file string) {
 	if e := os.Remove(file); e != nil && !os.IsNotExist(e) {
 		log.Warnf("unable to delete file %s: %v", file, e)

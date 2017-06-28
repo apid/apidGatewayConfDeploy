@@ -22,7 +22,6 @@ import (
 	"net/url"
 	"os"
 	"path"
-	"strconv"
 	"sync/atomic"
 	"time"
 )
@@ -35,7 +34,7 @@ type bundleManagerInterface interface {
 	initializeBundleDownloading()
 	queueDownloadRequest(*DataDeployment)
 	enqueueRequest(*DownloadRequest)
-	deleteBundles([]DataDeployment)
+	//deleteBundles([]DataDeployment)
 	Close()
 }
 
@@ -68,20 +67,34 @@ func (bm *bundleManager) initializeBundleDownloading() {
 	}
 }
 
+// download bundle blob and resource blob
+// TODO do not download duplicate blobs
 func (bm *bundleManager) queueDownloadRequest(dep *DataDeployment) {
 
 	retryIn := bm.bundleRetryDelay
 	maxBackOff := 5 * time.Minute
 	markFailedAt := time.Now().Add(bm.markDeploymentFailedAfter)
-	req := &DownloadRequest{
+
+	blobReq := &DownloadRequest{
 		bm:           bm,
-		dep:          dep,
-		bundleFile:   getBundleFile(dep),
+		blobId:       dep.BlobID,
 		backoffFunc:  createBackoff(retryIn, maxBackOff),
 		markFailedAt: markFailedAt,
 		connTimeout:  bm.bundleDownloadConnTimeout,
 	}
-	go bm.enqueueRequest(req)
+
+	resourceReq := &DownloadRequest{
+		bm:           bm,
+		blobId:       dep.BlobID,
+		backoffFunc:  createBackoff(retryIn, maxBackOff),
+		markFailedAt: markFailedAt,
+		connTimeout:  bm.bundleDownloadConnTimeout,
+	}
+
+	go func() {
+		bm.enqueueRequest(blobReq)
+		bm.enqueueRequest(resourceReq)
+	}()
 }
 
 // a blocking method to enqueue download requests
@@ -89,11 +102,13 @@ func (bm *bundleManager) enqueueRequest(r *DownloadRequest) {
 	if atomic.LoadInt32(bm.isClosed) == 1 {
 		return
 	}
-	defer func() {
-		if r := recover(); r != nil {
-			log.Warn("trying to enque requests to closed bundleManager")
-		}
-	}()
+	/*
+		defer func() {
+			if r := recover(); r != nil {
+				log.Warn("trying to enque requests to closed bundleManager")
+			}
+		}()
+	*/
 	bm.downloadQueue <- r
 }
 
@@ -102,24 +117,27 @@ func (bm *bundleManager) Close() {
 	close(bm.downloadQueue)
 }
 
+// TODO add delete support
+
 func (bm *bundleManager) deleteBundles(deletedDeployments []DataDeployment) {
-	log.Debugf("will delete %d old bundles", len(deletedDeployments))
-	go func() {
-		// give clients a minute to avoid conflicts
-		time.Sleep(bm.bundleCleanupDelay)
-		for _, dep := range deletedDeployments {
-			bundleFile := getBundleFile(&dep)
-			log.Debugf("removing old bundle: %v", bundleFile)
-			// TODO Remove from the Database table edgex_blob_available
-			safeDelete(bundleFile)
-		}
-	}()
+	/*
+		log.Debugf("will delete %d old bundles", len(deletedDeployments))
+		go func() {
+			// give clients a minute to avoid conflicts
+			time.Sleep(bm.bundleCleanupDelay)
+			for _, dep := range deletedDeployments {
+				bundleFile := getBlobFilePath(dep.BlobID)
+				log.Debugf("removing old bundle: %v", bundleFile)
+				// TODO Remove from the Database table edgex_blob_available
+				safeDelete(bundleFile)
+			}
+		}()
+	*/
 }
 
 type DownloadRequest struct {
 	bm           *bundleManager
-	dep          *DataDeployment
-	bundleFile   string
+	blobId       string
 	backoffFunc  func()
 	markFailedAt time.Time
 	connTimeout  time.Duration
@@ -127,62 +145,44 @@ type DownloadRequest struct {
 
 func (r *DownloadRequest) downloadBundle() error {
 
-	dep := r.dep
-	log.Debugf("starting bundle download attempt for depId=%s: blobId=%s", dep.ID, dep.BlobID)
+	log.Debugf("starting bundle download attempt for blobId=%s", r.blobId)
 
 	r.checkTimeout()
 
-	tempFile, err := downloadFromURI(dep.BlobID, r.connTimeout)
+	downloadedFile, err := downloadFromURI(r.blobId, r.connTimeout)
 
 	if err != nil {
-		log.Errorf("Unable to download blob file blobId=%s: %s", dep.BlobID, err)
+		log.Errorf("Unable to download blob file blobId=%s err:%v", r.blobId, err)
 		return err
 	}
 
-	defer func() {
-		if tempFile != "" {
-			go safeDelete(tempFile)
-		}
-	}()
+	log.Debugf("blod downloaded. blobid=%s  filepath=%s", r.blobId, downloadedFile)
 
-	err = os.Rename(tempFile, r.bundleFile)
+	err = r.bm.dbMan.updateLocalFsLocation(r.blobId, downloadedFile)
 	if err != nil {
-		log.Errorf("Unable to rename temp blob file %s to %s: %s", tempFile, r.bundleFile, err)
+		log.Errorf("updateLocalFsLocation failed: blobId=%s", r.blobId)
 		return err
 	}
 
-	blobId := atomic.AddInt64(&gwBlobId, 1)
-	blobIds := strconv.FormatInt(blobId, 10)
-	err = r.bm.dbMan.updateLocalFsLocation(dep.ID, blobIds, r.bundleFile)
-	if err != nil {
-		return err
-	}
-	dep.GWBlobID = blobIds
+	log.Debugf("bundle downloaded: blobId=%s", r.blobId)
 
-	log.Debugf("bundle for depId=%s downloaded: blobId=%s", dep.ID, dep.BlobID)
-
-	// send deployments to client
-	r.bm.apiMan.addChangedDeployment(dep.ID)
+	// TODO send changed deployments to subscribers (API call with "block")
+	//r.bm.apiMan.addChangedDeployment(dep.ID)
 
 	return nil
 }
 
 func (r *DownloadRequest) checkTimeout() {
 
-	if !r.markFailedAt.IsZero() {
-		if time.Now().After(r.markFailedAt) {
-			r.markFailedAt = time.Time{}
-			log.Debugf("bundle download timeout. marking deployment %s failed. will keep retrying: %s",
-				r.dep.ID, r.dep.BlobID)
-		}
+	if !r.markFailedAt.IsZero() && time.Now().After(r.markFailedAt) {
+		r.markFailedAt = time.Time{}
+		log.Debugf("bundle download timeout. blobId=", r.blobId)
 	}
 
 }
 
-func getBundleFile(dep *DataDeployment) string {
-
-	return path.Join(bundlePath, base64.StdEncoding.EncodeToString([]byte(dep.ID)))
-
+func getBlobFilePath(blobId string) string {
+	return path.Join(bundlePath, base64.StdEncoding.EncodeToString([]byte(blobId)))
 }
 
 func getSignedURL(blobId string, bundleDownloadConnTimeout time.Duration) (string, error) {
@@ -227,7 +227,7 @@ func downloadFromURI(blobId string, bundleDownloadConnTimeout time.Duration) (te
 		return
 	}
 
-	tempFile, err = ioutil.TempFile(bundlePath, "download")
+	tempFile, err = ioutil.TempFile(bundlePath, "blob")
 	if err != nil {
 		log.Errorf("Unable to create temp file: %v", err)
 		return
@@ -280,7 +280,7 @@ func (w *BundleDownloader) Start() {
 		log.Debugf("started bundle downloader %d", w.id)
 
 		for req := range w.bm.downloadQueue {
-			log.Debugf("starting download %s", req.bundleFile)
+			log.Debugf("starting download blobId=%s", req.blobId)
 			err := req.downloadBundle()
 			if err != nil {
 				go func() {

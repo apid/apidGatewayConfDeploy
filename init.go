@@ -25,7 +25,8 @@ import (
 )
 
 const (
-	configHTTProtocol           = "apidHTTProtocol"
+	configProtocol              = "protocol_type"
+	configAPIListen             = "api_listen"
 	configBundleDirKey          = "gatewaydeploy_bundle_dir"
 	configDebounceDuration      = "gatewaydeploy_debounce_duration"
 	configBundleCleanupDelay    = "gatewaydeploy_bundle_cleanup_delay"
@@ -114,6 +115,8 @@ func initPlugin(s apid.Services) (apid.PluginData, error) {
 		return pluginData, fmt.Errorf("%s must be a positive duration", configDownloadConnTimeout)
 	}
 
+	log.Debug("apiServerBaseURI = " + apiServerBaseURI.String())
+
 	// initialize db manager
 
 	dbMan := &dbManager{
@@ -158,15 +161,13 @@ func initPlugin(s apid.Services) (apid.PluginData, error) {
 	}
 
 	bundleMan.initializeBundleDownloading()
-	go apiMan.distributeEvents()
+
+	//TODO initialize apiMan.distributeEvents() for api call with "block"
+	//go apiMan.distributeEvents()
 
 	initListener(services, dbMan, apiMan, bundleMan)
 
 	log.Debug("end init")
 
 	return pluginData, nil
-}
-
-func setServices() {
-
 }

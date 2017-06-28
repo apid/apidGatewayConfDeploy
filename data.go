@@ -28,18 +28,17 @@ type DataDeployment struct {
 	ID             string
 	OrgID          string
 	EnvID          string
+	BlobID         string
+	BlobResourceID string
 	Type           string
 	Name           string
 	Revision       string
-	BlobID         string
-	GWBlobID       string
-	BlobResourceID string
-	Updated        string
-	UpdatedBy      string
+	Path           string
 	Created        string
 	CreatedBy      string
+	Updated        string
+	UpdatedBy      string
 	BlobFSLocation string
-	BlobURL        string
 }
 
 type SQLExec interface {
@@ -51,7 +50,7 @@ type dbManagerInterface interface {
 	initDb() error
 	getUnreadyDeployments() ([]DataDeployment, error)
 	getReadyDeployments() ([]DataDeployment, error)
-	updateLocalFsLocation(string, string, string) error
+	updateLocalFsLocation(string, string) error
 	getLocalFSLocation(string) (string, error)
 }
 
@@ -80,21 +79,20 @@ func (dbc *dbManager) getDb() apid.DB {
 func (dbc *dbManager) initDb() error {
 	_, err := dbc.getDb().Exec(`
 	CREATE TABLE IF NOT EXISTS edgex_blob_available (
-   		gwblobid integer primary key,
-   		runtime_meta_id character varying NOT NULL,
-   		local_fs_location character varying NOT NULL,
-   		access_url character varying
+		id text primary key,
+   		local_fs_location text NOT NULL
 	);
 	`)
 	if err != nil {
 		return err
 	}
 
-	log.Debug("Database tables created.")
+	log.Debug("Database table edgex_blob_available created.")
 	return nil
 }
 
 // getUnreadyDeployments() returns array of resources that are not yet to be processed
+// TODO make it work with new schema
 func (dbc *dbManager) getUnreadyDeployments() (deployments []DataDeployment, err error) {
 
 	rows, err := dbc.getDb().Query(`
@@ -127,66 +125,78 @@ func (dbc *dbManager) getUnreadyDeployments() (deployments []DataDeployment, err
 }
 
 // getDeployments()
-func (dbc *dbManager) getReadyDeployments() (deployments []DataDeployment, err error) {
+func (dbc *dbManager) getReadyDeployments() ([]DataDeployment, error) {
 
-	rows, err := dbc.getDb().Query(`
-	SELECT a.id, a.org_id, a.env_id, a.name, a.type, a.revision, a.blob_id,
-		a.resource_blob_id, a.created_at, a.created_by, a.updated_at, a.updated_by,
-		b.local_fs_location, b.access_url, b.gwblobid
-		FROM project_runtime_blob_metadata as a
-			INNER JOIN edgex_blob_available as b
-			ON a.id = b.runtime_meta_id
+	rows, err := dbc.getDb().Query(`SELECT
+	a.id,
+	a.organization_id,
+	a.environment_id,
+	a.bean_blob_id,
+	a.resource_blob_id,
+	a.type,
+	a.name,
+	a.revision,
+	a.path,
+	a.created_at,
+	a.created_by,
+	a.updated_at,
+	a.updated_by,
+	b.local_fs_location
+	FROM metadata_runtime_entity_metadata as a
+	INNER JOIN edgex_blob_available as b
+	ON (a.bean_blob_id = b.id OR a.resource_blob_id = b.id)
+	;
 	`)
 
 	if err != nil {
 		log.Errorf("DB Query for project_runtime_blob_metadata failed %v", err)
-		return
+		return nil, err
 	}
 	defer rows.Close()
 
-	for rows.Next() {
-		dep := DataDeployment{}
-		rows.Scan(&dep.ID, &dep.OrgID, &dep.EnvID, &dep.Name, &dep.Type, &dep.Revision, &dep.BlobID,
-			&dep.BlobResourceID, &dep.Created, &dep.CreatedBy, &dep.Updated,
-			&dep.UpdatedBy, &dep.BlobFSLocation, &dep.BlobURL, &dep.GWBlobID)
-		deployments = append(deployments, dep)
-		log.Debugf("New Configurations available Id {%s} BlobId {%s}", dep.ID, dep.BlobID)
+	deployments, err := dataDeploymentsFromRow(rows)
+	if err != nil {
+		return nil, err
 	}
+
+	log.Debugf("Configurations ready: %v", deployments)
+
 	if len(deployments) == 0 {
 		log.Debug("No resources ready to be deployed")
 		err = sql.ErrNoRows
 	}
-	return
+	return deployments, err
 
 }
 
-func (dbc *dbManager) updateLocalFsLocation(depID, bundleId, localFsLocation string) error {
+func (dbc *dbManager) updateLocalFsLocation(blobId, localFsLocation string) error {
 
-	access_url := getHttpHost() + blobEndpointPath + "/" + bundleId
 	stmt, err := dbc.getDb().Prepare(`
-		INSERT INTO edgex_blob_available (runtime_meta_id, gwblobid, local_fs_location, access_url)
-			VALUES (?, ?, ?, ?)`)
+		INSERT OR IGNORE INTO edgex_blob_available (
+		id,
+		local_fs_location
+		) VALUES (?, ?);`)
 	if err != nil {
-		log.Errorf("PREPARE updatelocal_fs_location failed: %v", err)
+		log.Errorf("PREPARE updateLocalFsLocation failed: %v", err)
 		return err
 	}
 	defer stmt.Close()
 
-	_, err = stmt.Exec(depID, bundleId, localFsLocation, access_url)
+	_, err = stmt.Exec(blobId, localFsLocation)
 	if err != nil {
-		log.Errorf("UPDATE edgex_blob_available id {%s} local_fs_location {%s} failed: %v", depID, localFsLocation, err)
+		log.Errorf("UPDATE edgex_blob_available id {%s} local_fs_location {%s} failed", localFsLocation, err)
 		return err
 	}
 
-	log.Debugf("INSERT edgex_blob_available {%s} local_fs_location {%s} succeeded", depID, localFsLocation)
+	log.Debugf("INSERT edgex_blob_available {%s} local_fs_location {%s} succeeded", blobId, localFsLocation)
 	return nil
 
 }
 
-func (dbc *dbManager) getLocalFSLocation(blobId string) (locfs string, err error) {
+func (dbc *dbManager) getLocalFSLocation(blobId string) (localFsLocation string, err error) {
 
 	log.Debugf("Getting the blob file for blobId {%s}", blobId)
-	rows, err := dbc.getDb().Query("SELECT local_fs_location FROM edgex_blob_available WHERE gwblobid = \"" + blobId + "\"")
+	rows, err := dbc.getDb().Query("SELECT local_fs_location FROM edgex_blob_available WHERE id = '" + blobId + "'")
 	if err != nil {
 		log.Errorf("SELECT local_fs_location failed %v", err)
 		return "", err
@@ -194,8 +204,39 @@ func (dbc *dbManager) getLocalFSLocation(blobId string) (locfs string, err error
 
 	defer rows.Close()
 	for rows.Next() {
-		rows.Scan(&locfs)
-		log.Debugf("Got the blob file {%s} for blobId {%s}", locfs, blobId)
+		err = rows.Scan(&localFsLocation)
+		if err != nil {
+			log.Errorf("Scan local_fs_location failed %v", err)
+			return "", err
+		}
+		log.Debugf("Got the blob file {%s} for blobId {%s}", localFsLocation, blobId)
+	}
+	return
+}
+
+func dataDeploymentsFromRow(rows *sql.Rows) (deployments []DataDeployment, err error) {
+	for rows.Next() {
+		dep := DataDeployment{}
+		err = rows.Scan(
+			&dep.ID,
+			&dep.OrgID,
+			&dep.EnvID,
+			&dep.BlobID,
+			&dep.BlobResourceID,
+			&dep.Type,
+			&dep.Name,
+			&dep.Revision,
+			&dep.Path,
+			&dep.Created,
+			&dep.CreatedBy,
+			&dep.Updated,
+			&dep.UpdatedBy,
+			&dep.BlobFSLocation,
+		)
+		if err != nil {
+			return nil, err
+		}
+		deployments = append(deployments, dep)
 	}
 	return
 }
