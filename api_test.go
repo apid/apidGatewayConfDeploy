@@ -69,12 +69,14 @@ var _ = Describe("api", func() {
 			Expect(err).Should(Succeed())
 			defer res.Body.Close()
 			Expect(res.StatusCode).Should(Equal(http.StatusOK))
+
 			// parse response
 			var depRes ApiDeploymentResponse
 			body, err := ioutil.ReadAll(res.Body)
 			Expect(err).Should(Succeed())
 			err = json.Unmarshal(body, &depRes)
 			Expect(err).Should(Succeed())
+
 			// verify response
 			Expect(len(depRes.ApiDeploymentsResponse)).To(Equal(0))
 			Expect(depRes.Kind).Should(Equal(kindCollection))
@@ -96,18 +98,87 @@ var _ = Describe("api", func() {
 			Expect(err).Should(Succeed())
 			defer res.Body.Close()
 			Expect(res.StatusCode).Should(Equal(http.StatusOK))
+
 			// parse response
 			var depRes ApiDeploymentResponse
 			body, err := ioutil.ReadAll(res.Body)
 			Expect(err).Should(Succeed())
 			err = json.Unmarshal(body, &depRes)
 			Expect(err).Should(Succeed())
+
 			// verify response
 			Expect(depRes.Kind).Should(Equal(kindCollection))
 			Expect(depRes.Self).Should(Equal(uri.String()))
 			Expect(depRes.ApiDeploymentsResponse).Should(Equal(details))
 
 		})
+
+		It("should get 304 for no change", func() {
+
+			// setup http client
+			uri, err := url.Parse(testUrl)
+			Expect(err).Should(Succeed())
+			uri.Path = deploymentsEndpoint + strconv.Itoa(testCount)
+
+			// set test data
+			setTestDeployments(dummyDbMan, uri.String())
+
+			// http get
+			res, err := http.Get(uri.String())
+			Expect(err).Should(Succeed())
+			defer res.Body.Close()
+			Expect(res.StatusCode).Should(Equal(http.StatusOK))
+			etag := res.Header.Get("etag")
+			Expect(etag).ShouldNot(BeEmpty())
+
+			// send second request
+			req, err := http.NewRequest("GET", uri.String(), nil)
+			req.Header.Add("Content-Type", "application/json")
+			req.Header.Add("If-None-Match", etag)
+
+			// get response
+			res, err = http.DefaultClient.Do(req)
+			Expect(err).ShouldNot(HaveOccurred())
+			defer res.Body.Close()
+			Expect(res.StatusCode).To(Equal(http.StatusNotModified))
+		})
+
+		XIt("should get empty set after blocking if no deployments", func() {
+
+			start := time.Now()
+
+			// setup http client
+			uri, err := url.Parse(testUrl)
+			Expect(err).Should(Succeed())
+			uri.Path = deploymentsEndpoint + strconv.Itoa(testCount)
+			query := uri.Query()
+			query.Add("block", "1")
+			uri.RawQuery = query.Encode()
+
+			// http get
+			res, err := http.Get(uri.String())
+			Expect(err).Should(Succeed())
+			defer res.Body.Close()
+			Expect(res.StatusCode).Should(Equal(http.StatusOK))
+
+			//verify blocking time
+			blockingTime := time.Since(start)
+			log.Warnf("time used: %v", blockingTime.Seconds())
+			Expect(blockingTime.Seconds() > 0.9).Should(BeTrue())
+
+			// parse response
+			var depRes ApiDeploymentResponse
+			body, err := ioutil.ReadAll(res.Body)
+			Expect(err).Should(Succeed())
+			err = json.Unmarshal(body, &depRes)
+			Expect(err).Should(Succeed())
+
+			// verify response
+			Expect(len(depRes.ApiDeploymentsResponse)).To(Equal(0))
+			Expect(depRes.Kind).Should(Equal(kindCollection))
+			Expect(depRes.Self).Should(Equal(testUrl + deploymentsEndpoint + strconv.Itoa(testCount)))
+
+		}, 2)
 
 		It("should get iso8601 time", func() {
 			testTimes := []string{"", "2017-04-05 04:47:36.462 +0000 UTC", "2017-04-05 04:47:36.462-07:00", "2017-04-05T04:47:36.462Z", "2017-04-05 23:23:38.162+00:00", "2017-06-22 16:41:02.334"}
