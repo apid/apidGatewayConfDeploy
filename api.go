@@ -307,7 +307,7 @@ func (a *apiManager) sendDeployments(w http.ResponseWriter, dataDeps []DataDeplo
 			Env:            d.EnvID,
 			Scope:          a.getDeploymentScope(),
 			Revision:       d.Revision,
-			BlobId:         d.GWBlobID,
+			BlobId:         d.BlobID,
 			BlobURL:        d.BlobURL,
 			ResourceBlobId: d.BlobResourceID,
 			Created:        convertTime(d.Created),
