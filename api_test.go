@@ -59,6 +59,7 @@ var _ = Describe("api", func() {
 		})
 
 		It("should get empty set if no deployments", func() {
+			// setup http client
 			uri, err := url.Parse(testUrl)
 			Expect(err).Should(Succeed())
 			uri.Path = deploymentsEndpoint + strconv.Itoa(testCount)
@@ -82,6 +83,7 @@ var _ = Describe("api", func() {
 		})
 
 		It("should get correct config format", func() {
+			// setup http client
 			uri, err := url.Parse(testUrl)
 			Expect(err).Should(Succeed())
 			uri.Path = deploymentsEndpoint + strconv.Itoa(testCount)
@@ -105,6 +107,42 @@ var _ = Describe("api", func() {
 			Expect(depRes.Self).Should(Equal(uri.String()))
 			Expect(depRes.ApiDeploymentsResponse).Should(Equal(details))
 
+		})
+
+		It("should get iso8601 time", func() {
+			testTimes := []string{"", "2017-04-05 04:47:36.462 +0000 UTC", "2017-04-05 04:47:36.462-07:00", "2017-04-05T04:47:36.462Z", "2017-04-05 23:23:38.162+00:00", "2017-06-22 16:41:02.334"}
+			isoTime := []string{"", "2017-04-05T04:47:36.462Z", "2017-04-05T04:47:36.462-07:00", "2017-04-05T04:47:36.462Z", "2017-04-05T23:23:38.162Z", "2017-06-22T16:41:02.334Z"}
+
+			// setup http client
+			uri, err := url.Parse(testUrl)
+			Expect(err).Should(Succeed())
+			uri.Path = deploymentsEndpoint + strconv.Itoa(testCount)
+
+			for i, t := range testTimes {
+				log.Debug("insert deployment with timestamp: " + t)
+				// set test data
+				dep := makeTestDeployment()
+				dep.Created = t
+				dep.Updated = t
+				dummyDbMan.readyDeployments = []DataDeployment{*dep}
+				detail := makeExpectedDetail(dep, uri.String())
+				detail.Created = isoTime[i]
+				detail.Updated = isoTime[i]
+				// http get
+				res, err := http.Get(uri.String())
+				Expect(err).Should(Succeed())
+				defer res.Body.Close()
+				Expect(res.StatusCode).Should(Equal(http.StatusOK))
+				// parse response
+				var depRes ApiDeploymentResponse
+				body, err := ioutil.ReadAll(res.Body)
+				Expect(err).Should(Succeed())
+				err = json.Unmarshal(body, &depRes)
+				Expect(err).Should(Succeed())
+				// verify response
+				Expect(depRes.ApiDeploymentsResponse).Should(Equal([]ApiDeploymentDetails{*detail}))
+
+			}
 		})
 
 		It("should debounce requests", func(done Done) {
@@ -135,53 +173,63 @@ var _ = Describe("api", func() {
 })
 
 func setTestDeployments(dummyDbMan *dummyDbManager, self string) []ApiDeploymentDetails {
-	deployments := make([]DataDeployment, 0)
-	details := make([]ApiDeploymentDetails, 0)
+
 	mathrand.Seed(time.Now().UnixNano())
 	count := mathrand.Intn(5) + 1
+	deployments := make([]DataDeployment, count)
+	details := make([]ApiDeploymentDetails, count)
 
 	for i := 0; i < count; i++ {
-		dep := DataDeployment{
-			ID:             GenerateUUID(),
-			OrgID:          GenerateUUID(),
-			EnvID:          GenerateUUID(),
-			Type:           "virtual-host",
-			Name:           "vh-secure",
-			Revision:       "1",
-			BlobID:         GenerateUUID(),
-			GWBlobID:       GenerateUUID(),
-			BlobResourceID: GenerateUUID(),
-			Updated:        time.Now().Format(time.RFC3339),
-			UpdatedBy:      "haoming@google.com",
-			Created:        time.Now().Format(time.RFC3339),
-			CreatedBy:      "haoming@google.com",
-			BlobFSLocation: "BlobFSLocation",
-			BlobURL:        "http://localhost:6666/testBlobURL",
-		}
+		dep := makeTestDeployment()
+		detail := makeExpectedDetail(dep, self)
 
-		detail := ApiDeploymentDetails{
-			Self:           self + "/" + dep.ID,
-			Name:           dep.Name,
-			Type:           dep.Type,
-			Org:            dep.OrgID,
-			Env:            dep.EnvID,
-			Scope:          "",
-			Revision:       dep.Revision,
-			BlobId:         dep.BlobID,
-			BlobURL:        dep.BlobURL,
-			ResourceBlobId: dep.BlobResourceID,
-			Created:        dep.Created,
-			Updated:        dep.Updated,
-		}
-
-		deployments = append(deployments, dep)
-		details = append(details, detail)
+		deployments[i] = *dep
+		details[i] = *detail
 	}
 
 	dummyDbMan.readyDeployments = deployments
 	dummyDbMan.unreadyDeployments = deployments
 
 	return details
+}
+
+func makeTestDeployment() *DataDeployment {
+	dep := &DataDeployment{
+		ID:             GenerateUUID(),
+		OrgID:          GenerateUUID(),
+		EnvID:          GenerateUUID(),
+		Type:           "virtual-host",
+		Name:           "vh-secure",
+		Revision:       "1",
+		BlobID:         GenerateUUID(),
+		GWBlobID:       GenerateUUID(),
+		BlobResourceID: GenerateUUID(),
+		Updated:        time.Now().Format(time.RFC3339),
+		UpdatedBy:      "haoming@google.com",
+		Created:        time.Now().Format(time.RFC3339),
+		CreatedBy:      "haoming@google.com",
+		BlobFSLocation: "BlobFSLocation",
+		BlobURL:        "http://localhost:6666/testBlobURL",
+	}
+	return dep
+}
+
+func makeExpectedDetail(dep *DataDeployment, self string) *ApiDeploymentDetails {
+	detail := &ApiDeploymentDetails{
+		Self:           self + "/" + dep.ID,
+		Name:           dep.Name,
+		Type:           dep.Type,
+		Org:            dep.OrgID,
+		Env:            dep.EnvID,
+		Scope:          "",
+		Revision:       dep.Revision,
+		BlobId:         dep.BlobID,
+		BlobURL:        dep.BlobURL,
+		ResourceBlobId: dep.BlobResourceID,
+		Created:        dep.Created,
+		Updated:        dep.Updated,
+	}
+	return detail
 }
 
 type dummyDbManager struct {
