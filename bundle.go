@@ -24,10 +24,11 @@ import (
 	"path"
 	"sync/atomic"
 	"time"
+	"strings"
 )
 
 const (
-	BLOBSTORE_URI = "/v1/blobstore/signeduri"
+	BLOBSTORE_URI = "/v1/blobs/{BLOB_ID}/signedurl"
 )
 
 type bundleManagerInterface interface {
@@ -189,7 +190,7 @@ func getSignedURL(blobId string, bundleDownloadConnTimeout time.Duration) (strin
 		log.Panicf("bad url value for config %s: %s", blobUri, err)
 	}
 
-	blobUri.Path += BLOBSTORE_URI
+	blobUri.Path = strings.Replace(BLOBSTORE_URI, "{BLOB_ID}",blobId, 1)
 	parameters := url.Values{}
 	parameters.Add("action", "GET")
 	parameters.Add("key", blobId)

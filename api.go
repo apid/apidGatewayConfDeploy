@@ -356,7 +356,7 @@ func (a *apiManager) getBlobUrl(blobId string) string {
 	if blobId == "" {
 		return ""
 	}
-	return getHttpHost() + "/" + url.PathEscape(blobId)
+	return getHttpHost() + "/blobs/" + url.PathEscape(blobId)
 }
 
 func convertTime(t string) string {
