@@ -93,9 +93,10 @@ type ApiDeploymentResponse struct {
 	ApiDeploymentsResponse []ApiDeploymentDetails `json:"contents"`
 }
 
+//TODO add support for block and subscriber
 type apiManagerInterface interface {
 	InitAPI()
-	addChangedDeployment(string)
+	//addChangedDeployment(string)
 	//distributeEvents()
 }
 

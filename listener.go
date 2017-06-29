@@ -74,6 +74,7 @@ func (h *apigeeSyncHandler) processSnapshot(snapshot *common.Snapshot) {
 	h.startupOnExistingDatabase()
 	if !apiInitialized {
 		h.apiMan.InitAPI()
+		apiInitialized = true
 	}
 	log.Debug("Snapshot processed")
 }
@@ -123,9 +124,11 @@ func (h *apigeeSyncHandler) processChangeList(changes *common.ChangeList) {
 		}
 	}
 
-	for _, d := range deletedDeployments {
-		h.apiMan.addChangedDeployment(d.ID)
-	}
+	/*
+		for _, d := range deletedDeployments {
+			h.apiMan.addChangedDeployment(d.ID)
+		}
+	*/
 
 	for _, dep := range insertedDeployments {
 		go h.bundleMan.queueDownloadRequest(&dep)
