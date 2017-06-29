@@ -48,7 +48,6 @@ var _ = Describe("data", func() {
 		testDbMan.setDbVersion("test" + strconv.Itoa(testCount))
 		initTestDb(testDbMan.getDb())
 		testDbMan.initDb()
-		insertTestAvailableBlobTable(testDbMan.getDb())
 		time.Sleep(100 * time.Millisecond)
 	})
 
@@ -69,7 +68,7 @@ var _ = Describe("data", func() {
 			for rows.Next() {
 				rows.Scan(&count)
 			}
-			Expect(count).Should(Equal(1))
+			Expect(count).Should(Equal(0))
 
 			// metadata_runtime_entity_metadata
 			rows, err = testDbMan.getDb().Query(`
@@ -83,8 +82,38 @@ var _ = Describe("data", func() {
 			Expect(count).Should(Equal(3))
 		})
 
+		It("should succefully update local FS location", func() {
+
+			err := testDbMan.updateLocalFsLocation(readyBlobId, readyblobLocalFs)
+			Expect(err).Should(Succeed())
+			// edgex_blob_available
+			rows, err := testDbMan.getDb().Query(`
+				SELECT count(*) from edgex_blob_available;
+			`)
+			Expect(err).Should(Succeed())
+			defer rows.Close()
+			var count int
+			for rows.Next() {
+				rows.Scan(&count)
+			}
+			Expect(count).Should(Equal(1))
+		})
+
+		It("should succefully get local FS location", func() {
+
+			err := testDbMan.updateLocalFsLocation(readyBlobId, readyblobLocalFs)
+			Expect(err).Should(Succeed())
+
+			// edgex_blob_available
+			location, err := testDbMan.getLocalFSLocation(readyBlobId)
+			Expect(err).Should(Succeed())
+			Expect(location).Should(Equal(readyblobLocalFs))
+		})
+
 		It("should succefully get ready deployments", func() {
 
+			err := testDbMan.updateLocalFsLocation(readyBlobId, readyblobLocalFs)
+			Expect(err).Should(Succeed())
 			deps, err := testDbMan.getReadyDeployments()
 			Expect(err).Should(Succeed())
 			Expect(len(deps)).Should(Equal(1))
@@ -94,6 +123,8 @@ var _ = Describe("data", func() {
 
 		It("should succefully get unready blob ids", func() {
 
+			err := testDbMan.updateLocalFsLocation(readyBlobId, readyblobLocalFs)
+			Expect(err).Should(Succeed())
 			ids, err := testDbMan.getUnreadyBlobs()
 			Expect(err).Should(Succeed())
 			Expect(len(ids)).Should(Equal(2))
@@ -186,14 +217,5 @@ func initTestDb(db apid.DB) {
 		'ada76573-68e3-4f1a-a0f9-cbc201a97e80'
 		);
 	`)
-	Expect(err).Should(Succeed())
-}
-
-func insertTestAvailableBlobTable(db apid.DB) {
-	stmt, err := db.Prepare(`
-		INSERT INTO "edgex_blob_available" VALUES(?, ?);
-	`)
-	Expect(err).Should(Succeed())
-	_, err = stmt.Exec(readyBlobId, readyblobLocalFs)
 	Expect(err).Should(Succeed())
 }
