@@ -48,7 +48,6 @@ var (
 	bundlePath       string
 	debounceDuration time.Duration
 	apiServerBaseURI *url.URL
-	blobServerURL    string
 	apidInstanceID   string
 	apidClusterID    string
 )
@@ -139,7 +138,7 @@ func initPlugin(s apid.Services) (apid.PluginData, error) {
 
 	// initialize bundle manager
 
-	blobServerURL = config.GetString(configBlobServerBaseURI)
+	blobServerURL := config.GetString(configBlobServerBaseURI)
 	relativeBundlePath := config.GetString(configBundleDirKey)
 	storagePath := config.GetString(configStoragePath)
 	bundlePath = path.Join(storagePath, relativeBundlePath)
@@ -150,6 +149,7 @@ func initPlugin(s apid.Services) (apid.PluginData, error) {
 	concurrentDownloads := config.GetInt(configConcurrentDownloads)
 	downloadQueueSize := config.GetInt(configDownloadQueueSize)
 	bundleMan := &bundleManager{
+		blobServerUrl:             blobServerURL,
 		dbMan:                     dbMan,
 		apiMan:                    apiMan,
 		concurrentDownloads:       concurrentDownloads,

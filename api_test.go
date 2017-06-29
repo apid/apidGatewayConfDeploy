@@ -24,12 +24,13 @@ import (
 	. "github.com/onsi/ginkgo"
 	. "github.com/onsi/gomega"
 	mathrand "math/rand"
+	"os"
 	"strconv"
 	"time"
 )
 
 const (
-	testUrl    = "http://127.0.0.1:9000"
+	apiTestUrl = "http://127.0.0.1:9000"
 	testBlobId = "gcs:SHA-512:39ca7ae89bb9468af34df8bc873748b4035210c91bcc01359c092c1d51364b5f3df06bc69a40621acfaa46791af9ea41bc0f3429a84738ba1a7c8d394859601a"
 )
 
@@ -60,7 +61,7 @@ var _ = Describe("api", func() {
 	Context("GET /configurations", func() {
 		It("should get empty set if no deployments", func() {
 			// setup http client
-			uri, err := url.Parse(testUrl)
+			uri, err := url.Parse(apiTestUrl)
 			Expect(err).Should(Succeed())
 			uri.Path = deploymentsEndpoint + strconv.Itoa(testCount)
 
@@ -80,13 +81,13 @@ var _ = Describe("api", func() {
 			// verify response
 			Expect(len(depRes.ApiDeploymentsResponse)).To(Equal(0))
 			Expect(depRes.Kind).Should(Equal(kindCollection))
-			Expect(depRes.Self).Should(Equal(testUrl + deploymentsEndpoint + strconv.Itoa(testCount)))
+			Expect(depRes.Self).Should(Equal(apiTestUrl + deploymentsEndpoint + strconv.Itoa(testCount)))
 
 		})
 
 		It("should get correct config format", func() {
 			// setup http client
-			uri, err := url.Parse(testUrl)
+			uri, err := url.Parse(apiTestUrl)
 			Expect(err).Should(Succeed())
 			uri.Path = deploymentsEndpoint + strconv.Itoa(testCount)
 
@@ -116,7 +117,7 @@ var _ = Describe("api", func() {
 		It("should get 304 for no change", func() {
 
 			// setup http client
-			uri, err := url.Parse(testUrl)
+			uri, err := url.Parse(apiTestUrl)
 			Expect(err).Should(Succeed())
 			uri.Path = deploymentsEndpoint + strconv.Itoa(testCount)
 
@@ -149,7 +150,7 @@ var _ = Describe("api", func() {
 			start := time.Now()
 
 			// setup http client
-			uri, err := url.Parse(testUrl)
+			uri, err := url.Parse(apiTestUrl)
 			Expect(err).Should(Succeed())
 			uri.Path = deploymentsEndpoint + strconv.Itoa(testCount)
 			query := uri.Query()
@@ -177,7 +178,7 @@ var _ = Describe("api", func() {
 			// verify response
 			Expect(len(depRes.ApiDeploymentsResponse)).To(Equal(0))
 			Expect(depRes.Kind).Should(Equal(kindCollection))
-			Expect(depRes.Self).Should(Equal(testUrl + deploymentsEndpoint + strconv.Itoa(testCount)))
+			Expect(depRes.Self).Should(Equal(apiTestUrl + deploymentsEndpoint + strconv.Itoa(testCount)))
 
 		}, 2)
 
@@ -186,7 +187,7 @@ var _ = Describe("api", func() {
 			isoTime := []string{"", "2017-04-05T04:47:36.462Z", "2017-04-05T04:47:36.462-07:00", "2017-04-05T04:47:36.462Z", "2017-04-05T23:23:38.162Z", "2017-06-22T16:41:02.334Z"}
 
 			// setup http client
-			uri, err := url.Parse(testUrl)
+			uri, err := url.Parse(apiTestUrl)
 			Expect(err).Should(Succeed())
 			uri.Path = deploymentsEndpoint + strconv.Itoa(testCount)
 
@@ -246,7 +247,7 @@ var _ = Describe("api", func() {
 	Context("GET /blobs", func() {
 		It("should get file bytesfrom endpoint", func() {
 			// setup http client
-			uri, err := url.Parse(testUrl)
+			uri, err := url.Parse(apiTestUrl)
 			Expect(err).Should(Succeed())
 			uri.Path = blobEndpointPath + strconv.Itoa(testCount) + "/test"
 
@@ -336,6 +337,7 @@ type dummyDbManager struct {
 	unreadyBlobIds   []string
 	readyDeployments []DataDeployment
 	localFSLocation  string
+	fileResponse     chan string
 }
 
 func (d *dummyDbManager) setDbVersion(version string) {
@@ -354,7 +356,17 @@ func (d *dummyDbManager) getReadyDeployments() ([]DataDeployment, error) {
 	return d.readyDeployments, nil
 }
 
-func (d *dummyDbManager) updateLocalFsLocation(string, string) error {
+func (d *dummyDbManager) updateLocalFsLocation(blobId, localFsLocation string) error {
+	file, err := os.Open(localFsLocation)
+	if err != nil {
+		return err
+	}
+	buff := make([]byte, 36)
+	_, err = file.Read(buff)
+	if err != nil {
+		return err
+	}
+	d.fileResponse <- string(buff)
 	return nil
 }
 

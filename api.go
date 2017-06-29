@@ -221,7 +221,7 @@ func (a *apiManager) apiReturnBlobData(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		a.writeInternalError(w, err.Error())
 	}
-	w.Header().Set("Content-type", headerSteam)
+	w.Header().Set("Content-Type", headerSteam)
 
 }
 

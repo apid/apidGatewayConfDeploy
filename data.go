@@ -137,7 +137,7 @@ func (dbc *dbManager) getUnreadyBlobs() (ids []string, err error) {
 	return
 }
 
-// getDeployments()
+// TODO there's a bug in the db statement
 func (dbc *dbManager) getReadyDeployments() ([]DataDeployment, error) {
 
 	rows, err := dbc.getDb().Query(`SELECT
