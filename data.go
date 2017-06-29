@@ -119,8 +119,8 @@ func (dbc *dbManager) getUnreadyBlobs() (ids []string, err error) {
 	SELECT a.resource_blob_id
 		FROM metadata_runtime_entity_metadata as a
 		LEFT JOIN edgex_blob_available as b
-		ON a.bean_blob_id = b.id
-		WHERE b.id IS NULL;
+		ON a.resource_blob_id = b.id
+		WHERE (b.id IS NULL AND a.resource_blob_id IS NOT NULL AND a.resource_blob_id != '');
 	`)
 	if err != nil {
 		log.Errorf("DB Query for project_runtime_blob_metadata failed %v", err)

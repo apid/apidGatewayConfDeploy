@@ -24,6 +24,18 @@ import (
 	"time"
 )
 
+const (
+	readyBlobId      = "gcs:SHA-512:39ca7ae89bb9468af34df8bc873748b4035210c91bcc01359c092c1d51364b5f3df06bc69a40621acfaa46791af9ea41bc0f3429a84738ba1a7c8d394859601a"
+	readyblobLocalFs = "/tmp/tmpapid/gcs:SHA-512:39ca7ae89bb9468af34df8bc873748b4035210c91bcc01359c092c1d51364b5f3df06bc69a40621acfaa46791af9ea41bc0f3429a84738ba1a7c8d394859601a"
+)
+
+var (
+	unreadyBlobIds = map[string]bool{
+		"gcs:SHA-512:8fcc902465ccb32ceff25fa9f6fb28e3b314dbc2874c0f8add02f4e29c9e2798d344c51807aa1af56035cf09d39c800cf605d627ba65723f26d8b9c83c82d2f2": true,
+		"gcs:SHA-512:9938d075b8c8925e118a61c047d330a6ba852c2b3ccb2fd2c4ecf6f444482ef3a24ef2e7cd3b8a01be771135d78db370518debce244a33289c1bb3d7f325d4a2": true,
+	}
+)
+
 var _ = Describe("data", func() {
 	var testCount int
 	var testDbMan *dbManager
@@ -36,6 +48,7 @@ var _ = Describe("data", func() {
 		testDbMan.setDbVersion("test" + strconv.Itoa(testCount))
 		initTestDb(testDbMan.getDb())
 		testDbMan.initDb()
+		insertTestAvailableBlobTable(testDbMan.getDb())
 		time.Sleep(100 * time.Millisecond)
 	})
 
@@ -56,7 +69,7 @@ var _ = Describe("data", func() {
 			for rows.Next() {
 				rows.Scan(&count)
 			}
-			Expect(count).Should(Equal(0))
+			Expect(count).Should(Equal(1))
 
 			// metadata_runtime_entity_metadata
 			rows, err = testDbMan.getDb().Query(`
@@ -67,7 +80,26 @@ var _ = Describe("data", func() {
 			for rows.Next() {
 				rows.Scan(&count)
 			}
-			Expect(count).Should(Equal(1))
+			Expect(count).Should(Equal(3))
+		})
+
+		It("should succefully get ready deployments", func() {
+
+			deps, err := testDbMan.getReadyDeployments()
+			Expect(err).Should(Succeed())
+			Expect(len(deps)).Should(Equal(1))
+			Expect(deps[0].BlobID).Should(Equal(readyBlobId))
+			Expect(deps[0].BlobFSLocation).Should(Equal(readyblobLocalFs))
+		})
+
+		It("should succefully get unready blob ids", func() {
+
+			ids, err := testDbMan.getUnreadyBlobs()
+			Expect(err).Should(Succeed())
+			Expect(len(ids)).Should(Equal(2))
+			for _, id := range ids {
+				Expect(unreadyBlobIds[id]).Should(BeTrue())
+			}
 		})
 
 	})
@@ -116,4 +148,52 @@ func initTestDb(db apid.DB) {
 	`)
 	Expect(err).Should(Succeed())
 
+	_, err = db.Exec(`
+		INSERT INTO "metadata_runtime_entity_metadata" VALUES(
+		'ada76573-68e3-4f1a-a0f9-cbc201a97e80',
+		'73fcac6c-5d9f-44c1-8db0-333efda3e6e8',
+		'ada76573-68e3-4f1a-a0f9-cbc201a97e80',
+		'gcs:SHA-512:8fcc902465ccb32ceff25fa9f6fb28e3b314dbc2874c0f8add02f4e29c9e2798d344c51807aa1af56035cf09d39c800cf605d627ba65723f26d8b9c83c82d2f2',
+		'',
+		'ENVIRONMENT',
+		'test',
+		'',
+		'/organizations/Org1//environments/test/',
+		'2017-06-27 03:14:46.018+00:00',
+		'defaultUser',
+		'2017-06-27 03:14:46.018+00:00',
+		'defaultUser',
+		'ada76573-68e3-4f1a-a0f9-cbc201a97e80'
+		);
+	`)
+	Expect(err).Should(Succeed())
+
+	_, err = db.Exec(`
+		INSERT INTO "metadata_runtime_entity_metadata" VALUES(
+		'65e7c3d3-9ef7-4e41-84ae-6cc385178e9d',
+		'73fcac6c-5d9f-44c1-8db0-333efda3e6e8',
+		'ada76573-68e3-4f1a-a0f9-cbc201a97e80',
+		'gcs:SHA-512:9938d075b8c8925e118a61c047d330a6ba852c2b3ccb2fd2c4ecf6f444482ef3a24ef2e7cd3b8a01be771135d78db370518debce244a33289c1bb3d7f325d4a2',
+		'',
+		'VIRTUAL_HOST',
+		'default',
+		'',
+		'/organizations/Org1/environments/test/virtualhosts/default',
+		'2017-06-27 03:48:18.284+00:00',
+		'-NA-',
+		'2017-06-27 03:48:18.284+00:00',
+		'-NA-',
+		'ada76573-68e3-4f1a-a0f9-cbc201a97e80'
+		);
+	`)
+	Expect(err).Should(Succeed())
+}
+
+func insertTestAvailableBlobTable(db apid.DB) {
+	stmt, err := db.Prepare(`
+		INSERT INTO "edgex_blob_available" VALUES(?, ?);
+	`)
+	Expect(err).Should(Succeed())
+	_, err = stmt.Exec(readyBlobId, readyblobLocalFs)
+	Expect(err).Should(Succeed())
 }
