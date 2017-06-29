@@ -321,7 +321,7 @@ func makeExpectedDetail(dep *DataDeployment, self string) *ApiDeploymentDetails 
 		Name:            dep.Name,
 		Type:            dep.Type,
 		Revision:        dep.Revision,
-		BeanBlobUrl:     getHttpHost() + "/" + testBlobId,
+		BeanBlobUrl:     getBlobUrl(testBlobId),
 		Org:             dep.OrgID,
 		Env:             dep.EnvID,
 		ResourceBlobUrl: "",

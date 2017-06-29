@@ -317,10 +317,10 @@ func (a *apiManager) sendDeployments(w http.ResponseWriter, dataDeps []DataDeplo
 			Name:            d.Name,
 			Type:            d.Type,
 			Revision:        d.Revision,
-			BeanBlobUrl:     a.getBlobUrl(d.BlobID),
+			BeanBlobUrl:     getBlobUrl(d.BlobID),
 			Org:             d.OrgID,
 			Env:             d.EnvID,
-			ResourceBlobUrl: a.getBlobUrl(d.BlobResourceID),
+			ResourceBlobUrl: getBlobUrl(d.BlobResourceID),
 			Path:            d.Path,
 			Created:         convertTime(d.Created),
 			Updated:         convertTime(d.Updated),
@@ -352,7 +352,7 @@ func (a *apiManager) getETag() string {
 }
 
 // escape the blobId into url
-func (a *apiManager) getBlobUrl(blobId string) string {
+func getBlobUrl(blobId string) string {
 	if blobId == "" {
 		return ""
 	}
