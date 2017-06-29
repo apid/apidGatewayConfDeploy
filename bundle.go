@@ -34,6 +34,7 @@ type bundleManagerInterface interface {
 	initializeBundleDownloading()
 	queueDownloadRequest(*DataDeployment)
 	enqueueRequest(*DownloadRequest)
+	makeDownloadRequest(string) *DownloadRequest
 	//deleteBundles([]DataDeployment)
 	Close()
 }
@@ -70,31 +71,27 @@ func (bm *bundleManager) initializeBundleDownloading() {
 // download bundle blob and resource blob
 // TODO do not download duplicate blobs
 func (bm *bundleManager) queueDownloadRequest(dep *DataDeployment) {
-
-	retryIn := bm.bundleRetryDelay
-	maxBackOff := 5 * time.Minute
-	markFailedAt := time.Now().Add(bm.markDeploymentFailedAfter)
-
-	blobReq := &DownloadRequest{
-		bm:           bm,
-		blobId:       dep.BlobID,
-		backoffFunc:  createBackoff(retryIn, maxBackOff),
-		markFailedAt: markFailedAt,
-		connTimeout:  bm.bundleDownloadConnTimeout,
-	}
-
-	resourceReq := &DownloadRequest{
-		bm:           bm,
-		blobId:       dep.BlobID,
-		backoffFunc:  createBackoff(retryIn, maxBackOff),
-		markFailedAt: markFailedAt,
-		connTimeout:  bm.bundleDownloadConnTimeout,
-	}
+	blobReq := bm.makeDownloadRequest(dep.BlobID)
+	resourceReq := bm.makeDownloadRequest(dep.BlobResourceID)
 
 	go func() {
 		bm.enqueueRequest(blobReq)
 		bm.enqueueRequest(resourceReq)
 	}()
+}
+
+func (bm *bundleManager) makeDownloadRequest(id string) *DownloadRequest {
+	markFailedAt := time.Now().Add(bm.markDeploymentFailedAfter)
+	retryIn := bm.bundleRetryDelay
+	maxBackOff := 5 * time.Minute
+
+	return &DownloadRequest{
+		bm:           bm,
+		blobId:       id,
+		backoffFunc:  createBackoff(retryIn, maxBackOff),
+		markFailedAt: markFailedAt,
+		connTimeout:  bm.bundleDownloadConnTimeout,
+	}
 }
 
 // a blocking method to enqueue download requests

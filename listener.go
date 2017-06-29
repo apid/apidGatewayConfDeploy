@@ -16,7 +16,6 @@ package apiGatewayConfDeploy
 import (
 	"os"
 
-	"database/sql"
 	"github.com/30x/apid-core"
 	"github.com/apigee-labs/transicator/common"
 )
@@ -85,15 +84,15 @@ func (h *apigeeSyncHandler) startupOnExistingDatabase() {
 	go func() {
 		// create edgex_blob_available table
 		h.dbMan.initDb()
+		blobIds, err := h.dbMan.getUnreadyBlobs()
 
-		deployments, err := h.dbMan.getUnreadyDeployments()
-
-		if err != nil && err != sql.ErrNoRows {
+		if err != nil {
 			log.Panicf("unable to query database for unready deployments: %v", err)
 		}
-		log.Debugf("Queuing %d deployments for bundle download", len(deployments))
-		for _, dep := range deployments {
-			go h.bundleMan.queueDownloadRequest(&dep)
+
+		log.Debugf("Queuing %d blob downloads", len(blobIds))
+		for _, id := range blobIds {
+			go h.bundleMan.enqueueRequest(h.bundleMan.makeDownloadRequest(id))
 		}
 	}()
 }

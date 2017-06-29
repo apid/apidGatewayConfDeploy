@@ -48,7 +48,7 @@ type SQLExec interface {
 type dbManagerInterface interface {
 	setDbVersion(string)
 	initDb() error
-	getUnreadyDeployments() ([]DataDeployment, error)
+	getUnreadyBlobs() ([]string, error)
 	getReadyDeployments() ([]DataDeployment, error)
 	updateLocalFsLocation(string, string) error
 	getLocalFSLocation(string) (string, error)
@@ -93,35 +93,48 @@ func (dbc *dbManager) initDb() error {
 
 // getUnreadyDeployments() returns array of resources that are not yet to be processed
 // TODO make it work with new schema
-func (dbc *dbManager) getUnreadyDeployments() (deployments []DataDeployment, err error) {
+func (dbc *dbManager) getUnreadyBlobs() (ids []string, err error) {
 
+	// get unready blob id
 	rows, err := dbc.getDb().Query(`
-	SELECT project_runtime_blob_metadata.id, org_id, env_id, name, revision, blob_id, resource_blob_id
-		FROM project_runtime_blob_metadata
-			LEFT JOIN edgex_blob_available
-			ON project_runtime_blob_metadata.id = edgex_blob_available.runtime_meta_id
-		WHERE edgex_blob_available.runtime_meta_id IS NULL;
+	SELECT a.bean_blob_id
+		FROM metadata_runtime_entity_metadata as a
+		LEFT JOIN edgex_blob_available as b
+		ON a.bean_blob_id = b.id
+		WHERE b.id IS NULL;
 	`)
-
 	if err != nil {
 		log.Errorf("DB Query for project_runtime_blob_metadata failed %v", err)
 		return
 	}
 	defer rows.Close()
-
 	for rows.Next() {
-		dep := DataDeployment{}
-		rows.Scan(&dep.ID, &dep.OrgID, &dep.EnvID, &dep.Name, &dep.Revision, &dep.BlobID,
-			&dep.BlobResourceID)
-		deployments = append(deployments, dep)
-		log.Debugf("New configurations to be processed Id {%s}, blobId {%s}", dep.ID, dep.BlobID)
+		var id string
+		rows.Scan(&id)
+		ids = append(ids, id)
 	}
-	if len(deployments) == 0 {
-		log.Debug("No new resources found to be processed")
-		err = sql.ErrNoRows
-	}
-	return
 
+	// get unready resource id
+	rows, err = dbc.getDb().Query(`
+	SELECT a.resource_blob_id
+		FROM metadata_runtime_entity_metadata as a
+		LEFT JOIN edgex_blob_available as b
+		ON a.bean_blob_id = b.id
+		WHERE b.id IS NULL;
+	`)
+	if err != nil {
+		log.Errorf("DB Query for project_runtime_blob_metadata failed %v", err)
+		return
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var id string
+		rows.Scan(&id)
+		ids = append(ids, id)
+	}
+
+	log.Debugf("Unready blobId %v", ids)
+	return
 }
 
 // getDeployments()

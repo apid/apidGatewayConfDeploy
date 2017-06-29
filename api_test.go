@@ -291,7 +291,6 @@ func setTestDeployments(dummyDbMan *dummyDbManager, self string) []ApiDeployment
 	}
 
 	dummyDbMan.readyDeployments = deployments
-	dummyDbMan.unreadyDeployments = deployments
 
 	return details
 }
@@ -334,9 +333,9 @@ func makeExpectedDetail(dep *DataDeployment, self string) *ApiDeploymentDetails 
 }
 
 type dummyDbManager struct {
-	unreadyDeployments []DataDeployment
-	readyDeployments   []DataDeployment
-	localFSLocation    string
+	unreadyBlobIds   []string
+	readyDeployments []DataDeployment
+	localFSLocation  string
 }
 
 func (d *dummyDbManager) setDbVersion(version string) {
@@ -347,8 +346,8 @@ func (d *dummyDbManager) initDb() error {
 	return nil
 }
 
-func (d *dummyDbManager) getUnreadyDeployments() ([]DataDeployment, error) {
-	return d.unreadyDeployments, nil
+func (d *dummyDbManager) getUnreadyBlobs() ([]string, error) {
+	return d.unreadyBlobIds, nil
 }
 
 func (d *dummyDbManager) getReadyDeployments() ([]DataDeployment, error) {
