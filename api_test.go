@@ -34,31 +34,30 @@ const (
 )
 
 var _ = Describe("api", func() {
-	Context("GET /deployments", func() {
-		var testCount int
-		var dummyDbMan *dummyDbManager
-		var testApiMan *apiManager
+	var testCount int
+	var dummyDbMan *dummyDbManager
+	var testApiMan *apiManager
 
-		var _ = BeforeEach(func() {
-			testCount += 1
-			dummyDbMan = &dummyDbManager{}
-			testApiMan = &apiManager{
-				dbMan:               dummyDbMan,
-				deploymentsEndpoint: deploymentsEndpoint + strconv.Itoa(testCount),
-				blobEndpoint:        blobEndpointPath + strconv.Itoa(testCount) + "/{blobId}",
-				eTag:                int64(testCount * 10),
-				deploymentsChanged:  make(chan interface{}, 5),
-				addSubscriber:       make(chan chan deploymentsResult),
-				removeSubscriber:    make(chan chan deploymentsResult),
-			}
-			testApiMan.InitAPI()
-			time.Sleep(100 * time.Millisecond)
-		})
+	var _ = BeforeEach(func() {
+		testCount += 1
+		dummyDbMan = &dummyDbManager{}
+		testApiMan = &apiManager{
+			dbMan:               dummyDbMan,
+			deploymentsEndpoint: deploymentsEndpoint + strconv.Itoa(testCount),
+			blobEndpoint:        blobEndpointPath + strconv.Itoa(testCount) + "/{blobId}",
+			eTag:                int64(testCount * 10),
+			deploymentsChanged:  make(chan interface{}, 5),
+			addSubscriber:       make(chan chan deploymentsResult),
+			removeSubscriber:    make(chan chan deploymentsResult),
+		}
+		testApiMan.InitAPI()
+		time.Sleep(100 * time.Millisecond)
+	})
 
-		var _ = AfterEach(func() {
-			testApiMan = nil
-		})
-
+	var _ = AfterEach(func() {
+		testApiMan = nil
+	})
+	Context("GET /configurations", func() {
 		It("should get empty set if no deployments", func() {
 			// setup http client
 			uri, err := url.Parse(testUrl)
@@ -144,6 +143,7 @@ var _ = Describe("api", func() {
 			Expect(res.StatusCode).To(Equal(http.StatusNotModified))
 		})
 
+		// block is not enabled now
 		XIt("should get empty set after blocking if no deployments", func() {
 
 			start := time.Now()
@@ -242,6 +242,37 @@ var _ = Describe("api", func() {
 		})
 
 	})
+
+	Context("GET /blobs", func() {
+		It("should get file bytesfrom endpoint", func() {
+			// setup http client
+			uri, err := url.Parse(testUrl)
+			Expect(err).Should(Succeed())
+			uri.Path = blobEndpointPath + strconv.Itoa(testCount) + "/test"
+
+			// set test data
+			testFile, err := ioutil.TempFile(bundlePath, "test")
+			randString := GenerateUUID()
+			testFile.Write([]byte(randString))
+			err = testFile.Close()
+			Expect(err).Should(Succeed())
+			dummyDbMan.localFSLocation = testFile.Name()
+
+			log.Debug("randString: " + randString)
+
+			// http get
+			res, err := http.Get(uri.String())
+			Expect(err).Should(Succeed())
+			defer res.Body.Close()
+			Expect(res.StatusCode).Should(Equal(http.StatusOK))
+
+			// parse response
+			body, err := ioutil.ReadAll(res.Body)
+			Expect(err).Should(Succeed())
+			Expect(string(body)).Should(Equal(randString))
+		})
+	})
+
 })
 
 func setTestDeployments(dummyDbMan *dummyDbManager, self string) []ApiDeploymentDetails {
@@ -305,6 +336,7 @@ func makeExpectedDetail(dep *DataDeployment, self string) *ApiDeploymentDetails 
 type dummyDbManager struct {
 	unreadyDeployments []DataDeployment
 	readyDeployments   []DataDeployment
+	localFSLocation    string
 }
 
 func (d *dummyDbManager) setDbVersion(version string) {
@@ -328,7 +360,7 @@ func (d *dummyDbManager) updateLocalFsLocation(string, string) error {
 }
 
 func (d *dummyDbManager) getLocalFSLocation(string) (string, error) {
-	return "", nil
+	return d.localFSLocation, nil
 }
 
 func GenerateUUID() string {

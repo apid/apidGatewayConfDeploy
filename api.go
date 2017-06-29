@@ -37,6 +37,12 @@ const (
 )
 
 const (
+	deploymentsEndpoint = "/configurations"
+	blobEndpointPath    = "/blobs"
+	blobEndpoint        = blobEndpointPath + "/{blobId}"
+)
+
+const (
 	API_ERR_BAD_BLOCK = iota + 1
 	API_ERR_INTERNAL
 )
@@ -50,6 +56,10 @@ const (
 
 const (
 	kindCollection = "Collection"
+)
+
+const (
+	headerSteam = "application/octet-stream"
 )
 
 type deploymentsResult struct {
@@ -82,12 +92,6 @@ type ApiDeploymentResponse struct {
 	Self                   string                 `json:"self"`
 	ApiDeploymentsResponse []ApiDeploymentDetails `json:"contents"`
 }
-
-const (
-	deploymentsEndpoint = "/configurations"
-	blobEndpointPath    = "/blob"
-	blobEndpoint        = blobEndpointPath + "/{blobId}"
-)
 
 type apiManagerInterface interface {
 	InitAPI()
@@ -197,6 +201,7 @@ func (a *apiManager) distributeEvents() {
 }
 */
 
+// TODO use If-None-Match and ETag
 func (a *apiManager) apiReturnBlobData(w http.ResponseWriter, r *http.Request) {
 
 	vars := mux.Vars(r)
@@ -215,6 +220,7 @@ func (a *apiManager) apiReturnBlobData(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		a.writeInternalError(w, err.Error())
 	}
+	w.Header().Set("Content-type", headerSteam)
 
 }
 

@@ -38,6 +38,7 @@ const (
 	configConcurrentDownloads   = "apigeesync_concurrent_downloads"
 	configDownloadQueueSize     = "apigeesync_download_queue_size"
 	configBlobServerBaseURI     = "apigeesync_blob_server_base"
+	configStoragePath           = "local_storage_path"
 )
 
 var (
@@ -140,7 +141,7 @@ func initPlugin(s apid.Services) (apid.PluginData, error) {
 
 	blobServerURL = config.GetString(configBlobServerBaseURI)
 	relativeBundlePath := config.GetString(configBundleDirKey)
-	storagePath := config.GetString("local_storage_path")
+	storagePath := config.GetString(configStoragePath)
 	bundlePath = path.Join(storagePath, relativeBundlePath)
 	if err := os.MkdirAll(bundlePath, 0700); err != nil {
 		return pluginData, fmt.Errorf("Failed bundle directory creation: %v", err)
