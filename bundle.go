@@ -190,7 +190,7 @@ func getSignedURL(blobId string, bundleDownloadConnTimeout time.Duration) (strin
 		log.Panicf("bad url value for config %s: %s", blobUri, err)
 	}
 
-	blobUri.Path = strings.Replace(BLOBSTORE_URI, "{BLOB_ID}",blobId, 1)
+	blobUri.Path += strings.Replace(BLOBSTORE_URI, "{BLOB_ID}",blobId, 1)
 	parameters := url.Values{}
 	parameters.Add("action", "GET")
 	parameters.Add("key", blobId)
