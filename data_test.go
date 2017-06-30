@@ -64,9 +64,9 @@ var _ = Describe("data", func() {
 		})
 
 		It("should succefully initialized tables", func() {
-			// edgex_blob_available
+			// apid_blob_available
 			rows, err := testDbMan.getDb().Query(`
-				SELECT count(*) from edgex_blob_available;
+				SELECT count(*) from apid_blob_available;
 			`)
 			Expect(err).Should(Succeed())
 			defer rows.Close()
@@ -92,9 +92,9 @@ var _ = Describe("data", func() {
 
 			err := testDbMan.updateLocalFsLocation(readyBlobId, readyblobLocalFs)
 			Expect(err).Should(Succeed())
-			// edgex_blob_available
+			// apid_blob_available
 			rows, err := testDbMan.getDb().Query(`
-				SELECT count(*) from edgex_blob_available;
+				SELECT count(*) from apid_blob_available;
 			`)
 			Expect(err).Should(Succeed())
 			defer rows.Close()
@@ -110,7 +110,7 @@ var _ = Describe("data", func() {
 			err := testDbMan.updateLocalFsLocation(readyBlobId, readyblobLocalFs)
 			Expect(err).Should(Succeed())
 
-			// edgex_blob_available
+			// apid_blob_available
 			location, err := testDbMan.getLocalFSLocation(readyBlobId)
 			Expect(err).Should(Succeed())
 			Expect(location).Should(Equal(readyblobLocalFs))
@@ -124,7 +124,6 @@ var _ = Describe("data", func() {
 			Expect(err).Should(Succeed())
 			Expect(len(deps)).Should(Equal(1))
 			Expect(deps[0].BlobID).Should(Equal(readyBlobId))
-			Expect(deps[0].BlobFSLocation).Should(Equal(readyblobLocalFs))
 		})
 
 		It("should succefully get unready blob ids", func() {

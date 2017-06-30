@@ -22,7 +22,7 @@ import (
 
 const (
 	APIGEE_SYNC_EVENT     = "ApigeeSync"
-	CONFIG_METADATA_TABLE = "project.runtime_blob_metadata"
+	CONFIG_METADATA_TABLE = "metadata.runtime_entity_metadata"
 )
 
 func (h *apigeeSyncHandler) initListener(services apid.Services) {
@@ -80,7 +80,7 @@ func (h *apigeeSyncHandler) processSnapshot(snapshot *common.Snapshot) {
 func (h *apigeeSyncHandler) startupOnExistingDatabase() {
 	// start bundle downloads that didn't finish
 	go func() {
-		// create edgex_blob_available table
+		// create apid_blob_available table
 		h.dbMan.initDb()
 		blobIds, err := h.dbMan.getUnreadyBlobs()
 
@@ -127,8 +127,8 @@ func (h *apigeeSyncHandler) processChangeList(changes *common.ChangeList) {
 		}
 	*/
 
-	for _, dep := range insertedDeployments {
-		go h.bundleMan.queueDownloadRequest(&dep)
+	for i := range insertedDeployments {
+		go h.bundleMan.queueDownloadRequest(&insertedDeployments[i])
 	}
 
 	// clean up old bundles

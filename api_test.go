@@ -311,7 +311,6 @@ func makeTestDeployment() *DataDeployment {
 		CreatedBy:      "haoming@google.com",
 		Updated:        time.Now().Format(time.RFC3339),
 		UpdatedBy:      "haoming@google.com",
-		BlobFSLocation: "BlobFSLocation",
 	}
 	return dep
 }

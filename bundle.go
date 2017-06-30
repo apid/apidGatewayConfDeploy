@@ -128,7 +128,7 @@ func (bm *bundleManager) deleteBundles(deletedDeployments []DataDeployment) {
 			for _, dep := range deletedDeployments {
 				bundleFile := getBlobFilePath(dep.BlobID)
 				log.Debugf("removing old bundle: %v", bundleFile)
-				// TODO Remove from the Database table edgex_blob_available
+				// TODO Remove from the Database table apid_blob_available
 				safeDelete(bundleFile)
 			}
 		}()

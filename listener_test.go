@@ -21,6 +21,7 @@ import (
 	. "github.com/onsi/ginkgo"
 	. "github.com/onsi/gomega"
 	"math/rand"
+	"reflect"
 	"time"
 )
 
@@ -37,6 +38,7 @@ var _ = Describe("listener", func() {
 		dummyDbMan = &dummyDbManager{}
 		dummyBundleMan = &dummyBundleManager{
 			requestChan: make(chan *DownloadRequest),
+			depChan:     make(chan *DataDeployment),
 		}
 		testHandler = &apigeeSyncHandler{
 			dbMan:     dummyDbMan,
@@ -56,7 +58,7 @@ var _ = Describe("listener", func() {
 			// init unready blob ids
 			unreadyBlobIds := make([]string, 0)
 			blobMap := make(map[string]int)
-			for i := 0; i < rand.Intn(10); i++ {
+			for i := 0; i < 1+rand.Intn(10); i++ {
 				id := GenerateUUID()
 				blobMap[id] = 1
 				unreadyBlobIds = append(unreadyBlobIds, id)
@@ -99,10 +101,41 @@ var _ = Describe("listener", func() {
 
 	})
 
+	Context("Change list", func() {
+
+		It("Insert event shoud enqueue download requests for all inserted deployments", func() {
+			// emit change event
+			changes := make([]common.Change, 0)
+			deployments := make(map[string]DataDeployment)
+			for i := 0; i < 1+rand.Intn(10); i++ {
+				dep := makeTestDeployment()
+				change := common.Change{
+					Operation: common.Insert,
+					Table:     CONFIG_METADATA_TABLE,
+					NewRow:    rowFromDeployment(dep),
+				}
+				changes = append(changes, change)
+				deployments[dep.ID] = *dep
+			}
+
+			changeList := &common.ChangeList{
+				Changes: changes,
+			}
+
+			apid.Events().Emit(APIGEE_SYNC_EVENT, changeList)
+
+			for i := 0; i < len(changes); i++ {
+				dep := <-dummyBundleMan.depChan
+				Expect(reflect.DeepEqual(deployments[dep.ID], *dep)).Should(BeTrue())
+				delete(deployments, dep.ID)
+			}
+		})
+	})
 })
 
 type dummyBundleManager struct {
 	requestChan chan *DownloadRequest
+	depChan     chan *DataDeployment
 }
 
 func (bm *dummyBundleManager) initializeBundleDownloading() {
@@ -110,7 +143,7 @@ func (bm *dummyBundleManager) initializeBundleDownloading() {
 }
 
 func (bm *dummyBundleManager) queueDownloadRequest(dep *DataDeployment) {
-
+	bm.depChan <- dep
 }
 
 func (bm *dummyBundleManager) enqueueRequest(req *DownloadRequest) {
@@ -125,4 +158,23 @@ func (bm *dummyBundleManager) makeDownloadRequest(blobId string) *DownloadReques
 
 func (bm *dummyBundleManager) Close() {
 
+}
+
+func rowFromDeployment(dep *DataDeployment) common.Row {
+	row := common.Row{}
+	row["id"] = &common.ColumnVal{Value: dep.ID}
+	row["organization_id"] = &common.ColumnVal{Value: dep.OrgID}
+	row["environment_id"] = &common.ColumnVal{Value: dep.EnvID}
+	row["bean_blob_id"] = &common.ColumnVal{Value: dep.BlobID}
+	row["resource_blob_id"] = &common.ColumnVal{Value: dep.BlobResourceID}
+	row["type"] = &common.ColumnVal{Value: dep.Type}
+	row["name"] = &common.ColumnVal{Value: dep.Name}
+	row["revision"] = &common.ColumnVal{Value: dep.Revision}
+	row["path"] = &common.ColumnVal{Value: dep.Path}
+	row["created_at"] = &common.ColumnVal{Value: dep.Created}
+	row["created_by"] = &common.ColumnVal{Value: dep.CreatedBy}
+	row["updated_at"] = &common.ColumnVal{Value: dep.Updated}
+	row["updated_by"] = &common.ColumnVal{Value: dep.UpdatedBy}
+
+	return row
 }

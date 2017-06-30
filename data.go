@@ -38,7 +38,6 @@ type DataDeployment struct {
 	CreatedBy      string
 	Updated        string
 	UpdatedBy      string
-	BlobFSLocation string
 }
 
 type SQLExec interface {
@@ -78,7 +77,7 @@ func (dbc *dbManager) getDb() apid.DB {
 
 func (dbc *dbManager) initDb() error {
 	_, err := dbc.getDb().Exec(`
-	CREATE TABLE IF NOT EXISTS edgex_blob_available (
+	CREATE TABLE IF NOT EXISTS apid_blob_available (
 		id text primary key,
    		local_fs_location text NOT NULL
 	);
@@ -87,7 +86,7 @@ func (dbc *dbManager) initDb() error {
 		return err
 	}
 
-	log.Debug("Database table edgex_blob_available created.")
+	log.Debug("Database table apid_blob_available created.")
 	return nil
 }
 
@@ -99,7 +98,7 @@ func (dbc *dbManager) getUnreadyBlobs() (ids []string, err error) {
 	rows, err := dbc.getDb().Query(`
 	SELECT a.bean_blob_id
 		FROM metadata_runtime_entity_metadata as a
-		LEFT JOIN edgex_blob_available as b
+		LEFT JOIN apid_blob_available as b
 		ON a.bean_blob_id = b.id
 		WHERE b.id IS NULL;
 	`)
@@ -118,7 +117,7 @@ func (dbc *dbManager) getUnreadyBlobs() (ids []string, err error) {
 	rows, err = dbc.getDb().Query(`
 	SELECT a.resource_blob_id
 		FROM metadata_runtime_entity_metadata as a
-		LEFT JOIN edgex_blob_available as b
+		LEFT JOIN apid_blob_available as b
 		ON a.resource_blob_id = b.id
 		WHERE (b.id IS NULL AND a.resource_blob_id IS NOT NULL AND a.resource_blob_id != '');
 	`)
@@ -153,10 +152,9 @@ func (dbc *dbManager) getReadyDeployments() ([]DataDeployment, error) {
 	a.created_at,
 	a.created_by,
 	a.updated_at,
-	a.updated_by,
-	b.local_fs_location
+	a.updated_by
 	FROM metadata_runtime_entity_metadata as a
-	INNER JOIN edgex_blob_available as b
+	INNER JOIN apid_blob_available as b
 	ON (a.bean_blob_id = b.id OR a.resource_blob_id = b.id)
 	;
 	`)
@@ -185,7 +183,7 @@ func (dbc *dbManager) getReadyDeployments() ([]DataDeployment, error) {
 func (dbc *dbManager) updateLocalFsLocation(blobId, localFsLocation string) error {
 
 	stmt, err := dbc.getDb().Prepare(`
-		INSERT OR IGNORE INTO edgex_blob_available (
+		INSERT OR IGNORE INTO apid_blob_available (
 		id,
 		local_fs_location
 		) VALUES (?, ?);`)
@@ -197,11 +195,11 @@ func (dbc *dbManager) updateLocalFsLocation(blobId, localFsLocation string) erro
 
 	_, err = stmt.Exec(blobId, localFsLocation)
 	if err != nil {
-		log.Errorf("UPDATE edgex_blob_available id {%s} local_fs_location {%s} failed", localFsLocation, err)
+		log.Errorf("UPDATE apid_blob_available id {%s} local_fs_location {%s} failed", localFsLocation, err)
 		return err
 	}
 
-	log.Debugf("INSERT edgex_blob_available {%s} local_fs_location {%s} succeeded", blobId, localFsLocation)
+	log.Debugf("INSERT apid_blob_available {%s} local_fs_location {%s} succeeded", blobId, localFsLocation)
 	return nil
 
 }
@@ -209,7 +207,7 @@ func (dbc *dbManager) updateLocalFsLocation(blobId, localFsLocation string) erro
 func (dbc *dbManager) getLocalFSLocation(blobId string) (localFsLocation string, err error) {
 
 	log.Debugf("Getting the blob file for blobId {%s}", blobId)
-	rows, err := dbc.getDb().Query("SELECT local_fs_location FROM edgex_blob_available WHERE id = '" + blobId + "'")
+	rows, err := dbc.getDb().Query("SELECT local_fs_location FROM apid_blob_available WHERE id = '" + blobId + "'")
 	if err != nil {
 		log.Errorf("SELECT local_fs_location failed %v", err)
 		return "", err
@@ -244,7 +242,6 @@ func dataDeploymentsFromRow(rows *sql.Rows) (deployments []DataDeployment, err e
 			&dep.CreatedBy,
 			&dep.Updated,
 			&dep.UpdatedBy,
-			&dep.BlobFSLocation,
 		)
 		if err != nil {
 			return nil, err
