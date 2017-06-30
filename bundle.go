@@ -148,7 +148,11 @@ func (r *DownloadRequest) downloadBundle() error {
 
 	log.Debugf("starting bundle download attempt for blobId=%s", r.blobId)
 
-	r.checkTimeout()
+	if r.checkTimeout() {
+		return &timeoutError{
+			markFailedAt: r.markFailedAt,
+		}
+	}
 
 	downloadedFile, err := downloadFromURI(r.blobServerURL, r.blobId, r.connTimeout)
 
@@ -173,13 +177,15 @@ func (r *DownloadRequest) downloadBundle() error {
 	return nil
 }
 
-func (r *DownloadRequest) checkTimeout() {
+func (r *DownloadRequest) checkTimeout() bool {
 
 	if !r.markFailedAt.IsZero() && time.Now().After(r.markFailedAt) {
 		r.markFailedAt = time.Time{}
 		log.Debugf("bundle download timeout. blobId=", r.blobId)
+		// TODO notify gateway of this failure
+		return true
 	}
-
+	return false
 }
 
 func getBlobFilePath(blobId string) string {
@@ -284,6 +290,10 @@ func (w *BundleDownloader) Start() {
 			log.Debugf("starting download blobId=%s", req.blobId)
 			err := req.downloadBundle()
 			if err != nil {
+				// timeout
+				if _, ok := err.(*timeoutError); ok {
+					continue
+				}
 				go func() {
 					req.backoffFunc()
 					w.bm.enqueueRequest(req)
@@ -304,4 +314,12 @@ func createBackoff(retryIn, maxBackOff time.Duration) func() {
 			retryIn = maxBackOff
 		}
 	}
+}
+
+type timeoutError struct {
+	markFailedAt time.Time
+}
+
+func (e *timeoutError) Error() string {
+	return fmt.Sprintf("Timeout. markFailedAt=%v", e.markFailedAt)
 }
