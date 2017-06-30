@@ -338,10 +338,11 @@ type dummyDbManager struct {
 	readyDeployments []DataDeployment
 	localFSLocation  string
 	fileResponse     chan string
+	version          string
 }
 
 func (d *dummyDbManager) setDbVersion(version string) {
-
+	d.version = version
 }
 
 func (d *dummyDbManager) initDb() error {

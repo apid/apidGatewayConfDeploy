@@ -132,9 +132,11 @@ var _ = Describe("api", func() {
 })
 
 type dummyApiManager struct {
+	initCalled bool
 }
 
 func (a *dummyApiManager) InitAPI() {
+	a.initCalled = true
 }
 
 type dummyBlobServer struct {

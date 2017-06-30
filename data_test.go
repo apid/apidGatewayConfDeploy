@@ -47,7 +47,8 @@ var _ = Describe("data", func() {
 		}
 		testDbMan.setDbVersion("test" + strconv.Itoa(testCount))
 		initTestDb(testDbMan.getDb())
-		testDbMan.initDb()
+		err := testDbMan.initDb()
+		Expect(err).Should(Succeed())
 		time.Sleep(100 * time.Millisecond)
 	})
 
@@ -57,6 +58,11 @@ var _ = Describe("data", func() {
 	})
 
 	Context("db tests", func() {
+		It("initDb() should be idempotent", func() {
+			err := testDbMan.initDb()
+			Expect(err).Should(Succeed())
+		})
+
 		It("should succefully initialized tables", func() {
 			// edgex_blob_available
 			rows, err := testDbMan.getDb().Query(`

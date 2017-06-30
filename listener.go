@@ -25,16 +25,15 @@ const (
 	CONFIG_METADATA_TABLE = "project.runtime_blob_metadata"
 )
 
-var apiInitialized bool
+func (h *apigeeSyncHandler) initListener(services apid.Services) {
+	services.Events().Listen(APIGEE_SYNC_EVENT, h)
+}
 
-func initListener(services apid.Services, dbMan dbManagerInterface, apiMan apiManagerInterface, bundleMan bundleManagerInterface) {
-	handler := &apigeeSyncHandler{
-		dbMan:     dbMan,
-		apiMan:    apiMan,
-		bundleMan: bundleMan,
+func (h *apigeeSyncHandler) stopListener(services apid.Services) {
+	if !h.closed {
+		services.Events().StopListening(APIGEE_SYNC_EVENT, h)
+		h.closed = true
 	}
-
-	services.Events().Listen(APIGEE_SYNC_EVENT, handler)
 }
 
 type bundleConfigJson struct {
@@ -48,6 +47,7 @@ type apigeeSyncHandler struct {
 	dbMan     dbManagerInterface
 	apiMan    apiManagerInterface
 	bundleMan bundleManagerInterface
+	closed    bool
 }
 
 func (h *apigeeSyncHandler) String() string {
@@ -72,10 +72,7 @@ func (h *apigeeSyncHandler) processSnapshot(snapshot *common.Snapshot) {
 	h.dbMan.setDbVersion(snapshot.SnapshotInfo)
 
 	h.startupOnExistingDatabase()
-	if !apiInitialized {
-		h.apiMan.InitAPI()
-		apiInitialized = true
-	}
+	h.apiMan.InitAPI()
 	log.Debug("Snapshot processed")
 }
 
