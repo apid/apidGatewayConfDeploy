@@ -145,17 +145,18 @@ func (h *apigeeSyncHandler) processChangeList(changes *common.ChangeList) {
 func dataDeploymentFromRow(row common.Row) (d DataDeployment) {
 
 	row.Get("id", &d.ID)
-	row.Get("org_id", &d.OrgID)
-	row.Get("env_id", &d.EnvID)
+	row.Get("organization_id", &d.OrgID)
+	row.Get("environment_id", &d.EnvID)
+	row.Get("bean_blob_id", &d.BlobID)
+	row.Get("resource_blob_id", &d.BlobResourceID)
 	row.Get("type", &d.Type)
 	row.Get("name", &d.Name)
 	row.Get("revision", &d.Revision)
-	row.Get("blob_id", &d.BlobID)
-	row.Get("resource_blob_id", &d.BlobResourceID)
-	row.Get("updated_at", &d.Updated)
-	row.Get("updated_by", &d.UpdatedBy)
+	row.Get("path", &d.Path)
 	row.Get("created_at", &d.Created)
 	row.Get("created_by", &d.CreatedBy)
+	row.Get("updated_at", &d.Updated)
+	row.Get("updated_by", &d.UpdatedBy)
 
 	return
 }
