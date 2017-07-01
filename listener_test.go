@@ -39,6 +39,7 @@ var _ = Describe("listener", func() {
 		dummyBundleMan = &dummyBundleManager{
 			requestChan: make(chan *DownloadRequest),
 			depChan:     make(chan *DataDeployment),
+			delChan:     make(chan *DataDeployment),
 		}
 		testHandler = &apigeeSyncHandler{
 			dbMan:     dummyDbMan,
@@ -124,11 +125,43 @@ var _ = Describe("listener", func() {
 
 			apid.Events().Emit(APIGEE_SYNC_EVENT, changeList)
 
+			// verify
 			for i := 0; i < len(changes); i++ {
 				dep := <-dummyBundleMan.depChan
 				Expect(reflect.DeepEqual(deployments[dep.ID], *dep)).Should(BeTrue())
 				delete(deployments, dep.ID)
 			}
+			Expect(len(deployments)).Should(BeZero())
+		})
+
+		It("Delete event shoud deliver to the bundle manager", func() {
+			// emit change event
+			changes := make([]common.Change, 0)
+			deployments := make(map[string]bool)
+			for i := 0; i < 1+rand.Intn(10); i++ {
+				dep := makeTestDeployment()
+				change := common.Change{
+					Operation: common.Delete,
+					Table:     CONFIG_METADATA_TABLE,
+					OldRow:    rowFromDeployment(dep),
+				}
+				changes = append(changes, change)
+				deployments[dep.ID] = true
+			}
+
+			changeList := &common.ChangeList{
+				Changes: changes,
+			}
+
+			apid.Events().Emit(APIGEE_SYNC_EVENT, changeList)
+
+			// verify
+			for i := 0; i < len(changes); i++ {
+				dep := <-dummyBundleMan.delChan
+				Expect(deployments[dep.ID]).Should(BeTrue())
+				delete(deployments, dep.ID)
+			}
+			Expect(len(deployments)).Should(BeZero())
 		})
 	})
 })
@@ -136,6 +169,7 @@ var _ = Describe("listener", func() {
 type dummyBundleManager struct {
 	requestChan chan *DownloadRequest
 	depChan     chan *DataDeployment
+	delChan     chan *DataDeployment
 }
 
 func (bm *dummyBundleManager) initializeBundleDownloading() {
@@ -153,6 +187,12 @@ func (bm *dummyBundleManager) enqueueRequest(req *DownloadRequest) {
 func (bm *dummyBundleManager) makeDownloadRequest(blobId string) *DownloadRequest {
 	return &DownloadRequest{
 		blobId: blobId,
+	}
+}
+
+func (bm *dummyBundleManager) deleteBundles(deployments []DataDeployment) {
+	for i := range deployments {
+		bm.delChan <- &deployments[i]
 	}
 }
 

@@ -36,7 +36,7 @@ type bundleManagerInterface interface {
 	queueDownloadRequest(*DataDeployment)
 	enqueueRequest(*DownloadRequest)
 	makeDownloadRequest(string) *DownloadRequest
-	//deleteBundles([]DataDeployment)
+	deleteBundles([]DataDeployment)
 	Close()
 }
 

@@ -135,7 +135,7 @@ func (h *apigeeSyncHandler) processChangeList(changes *common.ChangeList) {
 	if len(deletedDeployments) > 0 {
 		log.Debugf("will delete %d old bundles", len(deletedDeployments))
 		//TODO delete bundles for deleted deployments
-		//h.bundleMan.deleteBundles(deletedDeployments)
+		h.bundleMan.deleteBundles(deletedDeployments)
 	}
 }
 
