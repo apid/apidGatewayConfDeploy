@@ -22,19 +22,18 @@ import (
 
 const (
 	APIGEE_SYNC_EVENT     = "ApigeeSync"
-	CONFIG_METADATA_TABLE = "project.runtime_blob_metadata"
+	CONFIG_METADATA_TABLE = "metadata.runtime_entity_metadata"
 )
 
-var apiInitialized bool
+func (h *apigeeSyncHandler) initListener(services apid.Services) {
+	services.Events().Listen(APIGEE_SYNC_EVENT, h)
+}
 
-func initListener(services apid.Services, dbMan dbManagerInterface, apiMan apiManagerInterface, bundleMan bundleManagerInterface) {
-	handler := &apigeeSyncHandler{
-		dbMan:     dbMan,
-		apiMan:    apiMan,
-		bundleMan: bundleMan,
+func (h *apigeeSyncHandler) stopListener(services apid.Services) {
+	if !h.closed {
+		services.Events().StopListening(APIGEE_SYNC_EVENT, h)
+		h.closed = true
 	}
-
-	services.Events().Listen(APIGEE_SYNC_EVENT, handler)
 }
 
 type bundleConfigJson struct {
@@ -48,6 +47,7 @@ type apigeeSyncHandler struct {
 	dbMan     dbManagerInterface
 	apiMan    apiManagerInterface
 	bundleMan bundleManagerInterface
+	closed    bool
 }
 
 func (h *apigeeSyncHandler) String() string {
@@ -72,10 +72,7 @@ func (h *apigeeSyncHandler) processSnapshot(snapshot *common.Snapshot) {
 	h.dbMan.setDbVersion(snapshot.SnapshotInfo)
 
 	h.startupOnExistingDatabase()
-	if !apiInitialized {
-		h.apiMan.InitAPI()
-		apiInitialized = true
-	}
+	h.apiMan.InitAPI()
 	log.Debug("Snapshot processed")
 }
 
@@ -83,7 +80,7 @@ func (h *apigeeSyncHandler) processSnapshot(snapshot *common.Snapshot) {
 func (h *apigeeSyncHandler) startupOnExistingDatabase() {
 	// start bundle downloads that didn't finish
 	go func() {
-		// create edgex_blob_available table
+		// create apid_blob_available table
 		h.dbMan.initDb()
 		blobIds, err := h.dbMan.getUnreadyBlobs()
 
@@ -130,15 +127,15 @@ func (h *apigeeSyncHandler) processChangeList(changes *common.ChangeList) {
 		}
 	*/
 
-	for _, dep := range insertedDeployments {
-		go h.bundleMan.queueDownloadRequest(&dep)
+	for i := range insertedDeployments {
+		go h.bundleMan.queueDownloadRequest(&insertedDeployments[i])
 	}
 
 	// clean up old bundles
 	if len(deletedDeployments) > 0 {
 		log.Debugf("will delete %d old bundles", len(deletedDeployments))
 		//TODO delete bundles for deleted deployments
-		//h.bundleMan.deleteBundles(deletedDeployments)
+		h.bundleMan.deleteBundles(deletedDeployments)
 	}
 }
 

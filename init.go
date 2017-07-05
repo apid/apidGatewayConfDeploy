@@ -49,8 +49,7 @@ var (
 	bundlePath       string
 	debounceDuration time.Duration
 	apiServerBaseURI *url.URL
-	apidInstanceID   string
-	apidClusterID    string
+	eventHandler     *apigeeSyncHandler
 )
 
 func init() {
@@ -77,16 +76,6 @@ func initPlugin(s apid.Services) (apid.PluginData, error) {
 	if err != nil {
 		return pluginData, fmt.Errorf("%s value %s parse err: %v", configApiServerBaseURI, apiServerBaseURI, err)
 	}
-
-	if !config.IsSet(configApidInstanceID) {
-		return pluginData, fmt.Errorf("Missing required config value: %s", configApidInstanceID)
-	}
-	apidInstanceID = config.GetString(configApidInstanceID)
-
-	if !config.IsSet(configApidClusterID) {
-		return pluginData, fmt.Errorf("Missing required config value: %s", configApidClusterID)
-	}
-	apidClusterID = config.GetString(configApidClusterID)
 
 	config.SetDefault(configBundleDirKey, "bundles")
 	config.SetDefault(configDebounceDuration, time.Second)
@@ -135,6 +124,7 @@ func initPlugin(s apid.Services) (apid.PluginData, error) {
 		deploymentsChanged:  make(chan interface{}, 5),
 		addSubscriber:       make(chan chan deploymentsResult),
 		removeSubscriber:    make(chan chan deploymentsResult),
+		apiInitialized:      false,
 	}
 
 	// initialize bundle manager
@@ -167,7 +157,15 @@ func initPlugin(s apid.Services) (apid.PluginData, error) {
 	//TODO initialize apiMan.distributeEvents() for api call with "block"
 	//go apiMan.distributeEvents()
 
-	initListener(services, dbMan, apiMan, bundleMan)
+	// initialize event handler
+	eventHandler = &apigeeSyncHandler{
+		dbMan:     dbMan,
+		apiMan:    apiMan,
+		bundleMan: bundleMan,
+		closed:    false,
+	}
+
+	eventHandler.initListener(services)
 
 	log.Debug("end init")
 

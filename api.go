@@ -108,12 +108,17 @@ type apiManager struct {
 	deploymentsChanged  chan interface{}
 	addSubscriber       chan chan deploymentsResult
 	removeSubscriber    chan chan deploymentsResult
+	apiInitialized      bool
 }
 
 func (a *apiManager) InitAPI() {
-	log.Debug("API endpoints initialized")
+	if a.apiInitialized {
+		return
+	}
 	services.API().HandleFunc(a.deploymentsEndpoint, a.apiGetCurrentDeployments).Methods("GET")
 	services.API().HandleFunc(a.blobEndpoint, a.apiReturnBlobData).Methods("GET")
+	a.apiInitialized = true
+	log.Debug("API endpoints initialized")
 }
 
 func (a *apiManager) addChangedDeployment(id string) {
