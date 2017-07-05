@@ -192,11 +192,7 @@ func (dbc *dbManager) getReadyDeployments() ([]DataDeployment, error) {
 
 	log.Debugf("Configurations ready: %v", deployments)
 
-	if len(deployments) == 0 {
-		log.Debug("No resources ready to be deployed")
-		err = sql.ErrNoRows
-	}
-	return deployments, err
+	return deployments, nil
 
 }
 
