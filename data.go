@@ -136,9 +136,7 @@ func (dbc *dbManager) getUnreadyBlobs() (ids []string, err error) {
 	return
 }
 
-// TODO there's a bug in the db statement
 func (dbc *dbManager) getReadyDeployments() ([]DataDeployment, error) {
-
 
 	rows, err := dbc.getDb().Query(`
 		SELECT 	a.id,
@@ -153,31 +151,28 @@ func (dbc *dbManager) getReadyDeployments() ([]DataDeployment, error) {
 			a.created_at,
 			a.created_by,
 			a.updated_at,
-			a.updated_by,
-			b.local_fs_location
+			a.updated_by
 		FROM metadata_runtime_entity_metadata as a
-		INNER JOIN edgex_blob_available as b
-		ON (a.bean_blob_id = b.id)
 		WHERE a.id IN (
 			SELECT
 					a.id
 				FROM metadata_runtime_entity_metadata as a
-				INNER JOIN edgex_blob_available as b
+				INNER JOIN apid_blob_available as b
 				ON a.resource_blob_id = b.id
 				WHERE a.resource_blob_id != ""
 			INTERSECT
 				SELECT
 					a.id
 				FROM metadata_runtime_entity_metadata as a
-				INNER JOIN edgex_blob_available as b
-				ON a.resource_blob_id = b.id
+				INNER JOIN apid_blob_available as b
+				ON a.bean_blob_id = b.id
 				WHERE a.resource_blob_id != ""
 
 			UNION
 				SELECT
 					a.id
 				FROM metadata_runtime_entity_metadata as a
-				INNER JOIN edgex_blob_available as b
+				INNER JOIN apid_blob_available as b
 				ON a.bean_blob_id = b.id
 				WHERE a.resource_blob_id = ""
 		)
