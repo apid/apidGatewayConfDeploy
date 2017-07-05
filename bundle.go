@@ -36,7 +36,8 @@ type bundleManagerInterface interface {
 	queueDownloadRequest(*DataDeployment)
 	enqueueRequest(*DownloadRequest)
 	makeDownloadRequest(string) *DownloadRequest
-	deleteBundles([]DataDeployment)
+	deleteBundlesFromDeployments([]DataDeployment)
+	deleteBundleById(string)
 	Close()
 }
 
@@ -117,9 +118,12 @@ func (bm *bundleManager) Close() {
 	close(bm.downloadQueue)
 }
 
-// TODO add delete support
+func (bm *bundleManager) deleteBundlesFromDeployments(deletedDeployments []DataDeployment) {
+	for _, dep := range deletedDeployments {
+		go bm.deleteBundleById(dep.BlobID)
+		go bm.deleteBundleById(dep.BlobResourceID)
+	}
 
-func (bm *bundleManager) deleteBundles(deletedDeployments []DataDeployment) {
 	/*
 		log.Debugf("will delete %d old bundles", len(deletedDeployments))
 		go func() {
@@ -133,6 +137,11 @@ func (bm *bundleManager) deleteBundles(deletedDeployments []DataDeployment) {
 			}
 		}()
 	*/
+}
+
+// TODO add delete support
+func (bm *bundleManager) deleteBundleById(blobId string) {
+
 }
 
 type DownloadRequest struct {
