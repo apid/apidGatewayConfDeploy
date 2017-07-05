@@ -380,6 +380,11 @@ func convertTime(t string) string {
 }
 
 func getHttpHost() string {
+
+	configuredEndpoint := config.GetString(configBundleBlobDownloadEndpoint)
+	if configuredEndpoint != "" {
+		return configuredEndpoint
+	}
 	// apid-core has to set this according to the protocol apid is to be run: http/https
 	proto := config.GetString(configProtocol)
 	if proto == "" {

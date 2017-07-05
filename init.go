@@ -25,20 +25,21 @@ import (
 )
 
 const (
-	configProtocol              = "protocol_type"
-	configAPIListen             = "api_listen"
-	configBundleDirKey          = "gatewaydeploy_bundle_dir"
-	configDebounceDuration      = "gatewaydeploy_debounce_duration"
-	configBundleCleanupDelay    = "gatewaydeploy_bundle_cleanup_delay"
-	configMarkDeployFailedAfter = "gatewaydeploy_deployment_timeout"
-	configDownloadConnTimeout   = "gatewaydeploy_download_connection_timeout"
-	configApiServerBaseURI      = "apigeesync_proxy_server_base"
-	configApidInstanceID        = "apigeesync_apid_instance_id"
-	configApidClusterID         = "apigeesync_cluster_id"
-	configConcurrentDownloads   = "apigeesync_concurrent_downloads"
-	configDownloadQueueSize     = "apigeesync_download_queue_size"
-	configBlobServerBaseURI     = "apigeesync_blob_server_base"
-	configStoragePath           = "local_storage_path"
+	configProtocol                   = "protocol_type"
+	configAPIListen                  = "api_listen"
+	configBundleBlobDownloadEndpoint = "gatewaydeploy_bundle_download_endpoint"
+	configBundleDirKey               = "gatewaydeploy_bundle_dir"
+	configDebounceDuration           = "gatewaydeploy_debounce_duration"
+	configBundleCleanupDelay         = "gatewaydeploy_bundle_cleanup_delay"
+	configMarkDeployFailedAfter      = "gatewaydeploy_deployment_timeout"
+	configDownloadConnTimeout        = "gatewaydeploy_download_connection_timeout"
+	configApiServerBaseURI           = "apigeesync_proxy_server_base"
+	configApidInstanceID             = "apigeesync_apid_instance_id"
+	configApidClusterID              = "apigeesync_cluster_id"
+	configConcurrentDownloads        = "apigeesync_concurrent_downloads"
+	configDownloadQueueSize          = "apigeesync_download_queue_size"
+	configBlobServerBaseURI          = "apigeesync_blob_server_base"
+	configStoragePath                = "local_storage_path"
 )
 
 var (
