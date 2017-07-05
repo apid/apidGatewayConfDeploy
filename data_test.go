@@ -88,6 +88,12 @@ var _ = Describe("data", func() {
 			Expect(count).Should(Equal(3))
 		})
 
+		It("should get empty slice if no deployments are ready", func() {
+			deps, err := testDbMan.getReadyDeployments()
+			Expect(err).Should(Succeed())
+			Expect(len(deps)).Should(BeZero())
+		})
+
 		It("should succefully update local FS location", func() {
 
 			err := testDbMan.updateLocalFsLocation(readyBlobId, readyblobLocalFs)
