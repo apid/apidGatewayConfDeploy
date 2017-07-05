@@ -16,6 +16,7 @@ package apiGatewayConfDeploy
 import (
 	"bytes"
 	"encoding/json"
+	"fmt"
 	"github.com/gorilla/mux"
 	"io"
 	"io/ioutil"
@@ -302,7 +303,7 @@ func (a *apiManager) sendReadyDeployments(w http.ResponseWriter) {
 	eTag := a.getETag()
 	deployments, err := a.dbMan.getReadyDeployments()
 	if err != nil {
-		a.writeInternalError(w, "Database error")
+		a.writeInternalError(w, fmt.Sprintf("Database error: %s", err.Error()))
 		return
 	}
 	a.sendDeployments(w, deployments, eTag)
