@@ -125,6 +125,8 @@ func (dbc *dbManager) getUnreadyBlobs() (ids []string, err error) {
 
 func (dbc *dbManager) getReadyDeployments() ([]DataDeployment, error) {
 
+	// An alternative statement is in get_ready_deployments.sql
+	// Need testing with large data volume to determine which is better
 	rows, err := dbc.getDb().Query(`
 		SELECT 	a.id,
 			a.organization_id,
