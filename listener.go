@@ -100,6 +100,7 @@ func (h *apigeeSyncHandler) processChangeList(changes *common.ChangeList) {
 	log.Debugf("Processing changes")
 	// changes have been applied to DB
 	var insertedDeployments, deletedDeployments []DataDeployment
+	var updatedNewBlobs, updatedOldBlobs []string
 	for _, change := range changes.Changes {
 		switch change.Table {
 		case CONFIG_METADATA_TABLE:
@@ -108,13 +109,21 @@ func (h *apigeeSyncHandler) processChangeList(changes *common.ChangeList) {
 				dep := dataDeploymentFromRow(change.NewRow)
 				insertedDeployments = append(insertedDeployments, dep)
 			case common.Delete:
-				var id string
-				change.OldRow.Get("id", &id)
-				// only need these two fields to delete and determine bundle file
-				dep := DataDeployment{
-					ID: id,
-				}
+				dep := dataDeploymentFromRow(change.OldRow)
 				deletedDeployments = append(deletedDeployments, dep)
+			case common.Update:
+				depNew := dataDeploymentFromRow(change.NewRow)
+				depOld := dataDeploymentFromRow(change.OldRow)
+
+				if depOld.BlobID != depNew.BlobID {
+					updatedNewBlobs = append(updatedNewBlobs, depNew.BlobID)
+					updatedOldBlobs = append(updatedOldBlobs, depOld.BlobID)
+				}
+
+				if depOld.BlobResourceID != depNew.BlobResourceID {
+					updatedNewBlobs = append(updatedNewBlobs, depNew.BlobResourceID)
+					updatedOldBlobs = append(updatedOldBlobs, depOld.BlobResourceID)
+				}
 			default:
 				log.Errorf("unexpected operation: %s", change.Operation)
 			}
@@ -127,15 +136,25 @@ func (h *apigeeSyncHandler) processChangeList(changes *common.ChangeList) {
 		}
 	*/
 
+	// insert
 	for i := range insertedDeployments {
 		go h.bundleMan.queueDownloadRequest(&insertedDeployments[i])
 	}
 
-	// clean up old bundles
+	// update
+	for i := range updatedNewBlobs {
+		go h.bundleMan.enqueueRequest(h.bundleMan.makeDownloadRequest(updatedNewBlobs[i]))
+	}
+
+	for i := range updatedOldBlobs {
+		go h.bundleMan.deleteBundleById(updatedOldBlobs[i])
+	}
+
+	// delete
 	if len(deletedDeployments) > 0 {
 		log.Debugf("will delete %d old bundles", len(deletedDeployments))
 		//TODO delete bundles for deleted deployments
-		h.bundleMan.deleteBundles(deletedDeployments)
+		h.bundleMan.deleteBundlesFromDeployments(deletedDeployments)
 	}
 }
 
