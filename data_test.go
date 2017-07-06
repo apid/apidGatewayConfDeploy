@@ -25,14 +25,15 @@ import (
 )
 
 const (
-	readyBlobId      = "gcs:SHA-512:39ca7ae89bb9468af34df8bc873748b4035210c91bcc01359c092c1d51364b5f3df06bc69a40621acfaa46791af9ea41bc0f3429a84738ba1a7c8d394859601a"
-	readyblobLocalFs = "/tmp/tmpapid/gcs:SHA-512:39ca7ae89bb9468af34df8bc873748b4035210c91bcc01359c092c1d51364b5f3df06bc69a40621acfaa46791af9ea41bc0f3429a84738ba1a7c8d394859601a"
+	testBlobLocalFsPrefix = "/tmp/tmpapid/"
+	readyBlobId           = "gcs:SHA-512:39ca7ae89bb9468af34df8bc873748b4035210c91bcc01359c092c1d51364b5f3df06bc69a40621acfaa46791af9ea41bc0f3429a84738ba1a7c8d394859601a"
+	readyResourceId       = "gcs:SHA-512:ddd64d03c365dde4bb175cabb7d84beeb81dae11f1e326b30c9035b74be3ecb537187bdf35568647aa1b2adb341499516ca2faf2d73b78b1b98cba038f2a9e3c"
 )
 
 var (
 	unreadyBlobIds = map[string]bool{
 		"gcs:SHA-512:8fcc902465ccb32ceff25fa9f6fb28e3b314dbc2874c0f8add02f4e29c9e2798d344c51807aa1af56035cf09d39c800cf605d627ba65723f26d8b9c83c82d2f2": true,
-		"gcs:SHA-512:9938d075b8c8925e118a61c047d330a6ba852c2b3ccb2fd2c4ecf6f444482ef3a24ef2e7cd3b8a01be771135d78db370518debce244a33289c1bb3d7f325d4a2": true,
+		"gcs:SHA-512:0c648779da035bfe0ac21f6268049aa0ae74d9d6411dadefaec33991e55c2d66c807e06f7ef84e0947f7c7d63b8c9e97cf0684cbef9e0a86b947d73c74ae7455": true,
 	}
 )
 
@@ -85,7 +86,7 @@ var _ = Describe("data", func() {
 			for rows.Next() {
 				rows.Scan(&count)
 			}
-			Expect(count).Should(Equal(3))
+			Expect(count).Should(Equal(6))
 		})
 
 		It("should get empty slice if no deployments are ready", func() {
@@ -96,7 +97,7 @@ var _ = Describe("data", func() {
 
 		It("should succefully update local FS location", func() {
 
-			err := testDbMan.updateLocalFsLocation(readyBlobId, readyblobLocalFs)
+			err := testDbMan.updateLocalFsLocation(testBlobId, testBlobLocalFsPrefix+testBlobId)
 			Expect(err).Should(Succeed())
 			// apid_blob_available
 			rows, err := testDbMan.getDb().Query(`
@@ -113,29 +114,40 @@ var _ = Describe("data", func() {
 
 		It("should succefully get local FS location", func() {
 
-			err := testDbMan.updateLocalFsLocation(readyBlobId, readyblobLocalFs)
+			err := testDbMan.updateLocalFsLocation(testBlobId, testBlobLocalFsPrefix+testBlobId)
 			Expect(err).Should(Succeed())
 
 			// apid_blob_available
-			location, err := testDbMan.getLocalFSLocation(readyBlobId)
+			location, err := testDbMan.getLocalFSLocation(testBlobId)
 			Expect(err).Should(Succeed())
-			Expect(location).Should(Equal(readyblobLocalFs))
+			Expect(location).Should(Equal(testBlobLocalFsPrefix + testBlobId))
 		})
 
-		It("should succefully get ready deployments", func() {
+		It("should succefully get all ready deployments", func() {
 
-			err := testDbMan.updateLocalFsLocation(readyBlobId, readyblobLocalFs)
+			err := testDbMan.updateLocalFsLocation(readyBlobId, testBlobLocalFsPrefix+readyBlobId)
 			Expect(err).Should(Succeed())
+			err = testDbMan.updateLocalFsLocation(readyResourceId, testBlobLocalFsPrefix+readyResourceId)
+			Expect(err).Should(Succeed())
+
 			deps, err := testDbMan.getReadyDeployments()
 			Expect(err).Should(Succeed())
-			Expect(len(deps)).Should(Equal(1))
-			Expect(deps[0].BlobID).Should(Equal(readyBlobId))
+			Expect(len(deps)).Should(Equal(2))
+			for _, dep := range deps {
+				Expect(dep.BlobID).Should(Equal(readyBlobId))
+				if dep.BlobResourceID != "" {
+					Expect(dep.BlobResourceID).Should(Equal(readyResourceId))
+				}
+			}
 		})
 
-		It("should succefully get unready blob ids", func() {
+		It("should succefully get all unready blob ids", func() {
 
-			err := testDbMan.updateLocalFsLocation(readyBlobId, readyblobLocalFs)
+			err := testDbMan.updateLocalFsLocation(readyBlobId, testBlobLocalFsPrefix+readyBlobId)
 			Expect(err).Should(Succeed())
+			err = testDbMan.updateLocalFsLocation(readyResourceId, testBlobLocalFsPrefix+readyResourceId)
+			Expect(err).Should(Succeed())
+
 			ids, err := testDbMan.getUnreadyBlobs()
 			Expect(err).Should(Succeed())
 			Expect(len(ids)).Should(Equal(2))
@@ -170,6 +182,7 @@ func initTestDb(db apid.DB) {
 	`)
 	Expect(err).Should(Succeed())
 
+	// ready blob, empty resource
 	_, err = db.Exec(`
 		INSERT INTO "metadata_runtime_entity_metadata" VALUES(
 		'1dc4895e-6494-4b59-979f-5f4c89c073b4',
@@ -190,9 +203,52 @@ func initTestDb(db apid.DB) {
 	`)
 	Expect(err).Should(Succeed())
 
+	// ready blob, ready resource
 	_, err = db.Exec(`
 		INSERT INTO "metadata_runtime_entity_metadata" VALUES(
-		'ada76573-68e3-4f1a-a0f9-cbc201a97e80',
+		'319963ff-217e-4ecc-8d6e-c3665e962d1e',
+		'73fcac6c-5d9f-44c1-8db0-333efda3e6e8',
+		'',
+		'gcs:SHA-512:39ca7ae89bb9468af34df8bc873748b4035210c91bcc01359c092c1d51364b5f3df06bc69a40621acfaa46791af9ea41bc0f3429a84738ba1a7c8d394859601a',
+		'gcs:SHA-512:ddd64d03c365dde4bb175cabb7d84beeb81dae11f1e326b30c9035b74be3ecb537187bdf35568647aa1b2adb341499516ca2faf2d73b78b1b98cba038f2a9e3c',
+		'ORGANIZATION',
+		'Org1',
+		'',
+		'/organizations/Org1/',
+		'2017-06-27 03:14:45.748+00:00',
+		'defaultUser',
+		'2017-06-27 03:15:03.557+00:00',
+		'defaultUser',
+		'73fcac6c-5d9f-44c1-8db0-333efda3e6e8'
+		);
+	`)
+	Expect(err).Should(Succeed())
+
+	// ready blob, unready resource
+	_, err = db.Exec(`
+		INSERT INTO "metadata_runtime_entity_metadata" VALUES(
+		'3af44bb7-0a74-4283-860c-3561e6c19132',
+		'73fcac6c-5d9f-44c1-8db0-333efda3e6e8',
+		'',
+		'gcs:SHA-512:39ca7ae89bb9468af34df8bc873748b4035210c91bcc01359c092c1d51364b5f3df06bc69a40621acfaa46791af9ea41bc0f3429a84738ba1a7c8d394859601a',
+		'gcs:SHA-512:0c648779da035bfe0ac21f6268049aa0ae74d9d6411dadefaec33991e55c2d66c807e06f7ef84e0947f7c7d63b8c9e97cf0684cbef9e0a86b947d73c74ae7455',
+		'ORGANIZATION',
+		'Org1',
+		'',
+		'/organizations/Org1/',
+		'2017-06-27 03:14:45.748+00:00',
+		'defaultUser',
+		'2017-06-27 03:15:03.557+00:00',
+		'defaultUser',
+		'73fcac6c-5d9f-44c1-8db0-333efda3e6e8'
+		);
+	`)
+	Expect(err).Should(Succeed())
+
+	// unready blob, empty resource
+	_, err = db.Exec(`
+		INSERT INTO "metadata_runtime_entity_metadata" VALUES(
+		'd5ffd9db-4795-43eb-b645-d2a0b6c8ac6a',
 		'73fcac6c-5d9f-44c1-8db0-333efda3e6e8',
 		'ada76573-68e3-4f1a-a0f9-cbc201a97e80',
 		'gcs:SHA-512:8fcc902465ccb32ceff25fa9f6fb28e3b314dbc2874c0f8add02f4e29c9e2798d344c51807aa1af56035cf09d39c800cf605d627ba65723f26d8b9c83c82d2f2',
@@ -210,21 +266,43 @@ func initTestDb(db apid.DB) {
 	`)
 	Expect(err).Should(Succeed())
 
+	// unready blob, ready resource
 	_, err = db.Exec(`
 		INSERT INTO "metadata_runtime_entity_metadata" VALUES(
-		'65e7c3d3-9ef7-4e41-84ae-6cc385178e9d',
+		'84ac8d68-b3d1-4bcc-ad0d-c6a0ed67e16c',
 		'73fcac6c-5d9f-44c1-8db0-333efda3e6e8',
 		'ada76573-68e3-4f1a-a0f9-cbc201a97e80',
-		'gcs:SHA-512:9938d075b8c8925e118a61c047d330a6ba852c2b3ccb2fd2c4ecf6f444482ef3a24ef2e7cd3b8a01be771135d78db370518debce244a33289c1bb3d7f325d4a2',
+		'gcs:SHA-512:8fcc902465ccb32ceff25fa9f6fb28e3b314dbc2874c0f8add02f4e29c9e2798d344c51807aa1af56035cf09d39c800cf605d627ba65723f26d8b9c83c82d2f2',
+		'gcs:SHA-512:ddd64d03c365dde4bb175cabb7d84beeb81dae11f1e326b30c9035b74be3ecb537187bdf35568647aa1b2adb341499516ca2faf2d73b78b1b98cba038f2a9e3c',
+		'ENVIRONMENT',
+		'test',
 		'',
-		'VIRTUAL_HOST',
-		'default',
+		'/organizations/Org1//environments/test/',
+		'2017-06-27 03:14:46.018+00:00',
+		'defaultUser',
+		'2017-06-27 03:14:46.018+00:00',
+		'defaultUser',
+		'ada76573-68e3-4f1a-a0f9-cbc201a97e80'
+		);
+	`)
+	Expect(err).Should(Succeed())
+
+	// unready blob, unready resource
+	_, err = db.Exec(`
+		INSERT INTO "metadata_runtime_entity_metadata" VALUES(
+		'3ecd351c-1173-40bf-b830-c194e5ef9038',
+		'73fcac6c-5d9f-44c1-8db0-333efda3e6e8',
+		'ada76573-68e3-4f1a-a0f9-cbc201a97e80',
+		'gcs:SHA-512:8fcc902465ccb32ceff25fa9f6fb28e3b314dbc2874c0f8add02f4e29c9e2798d344c51807aa1af56035cf09d39c800cf605d627ba65723f26d8b9c83c82d2f2',
+		'gcs:SHA-512:0c648779da035bfe0ac21f6268049aa0ae74d9d6411dadefaec33991e55c2d66c807e06f7ef84e0947f7c7d63b8c9e97cf0684cbef9e0a86b947d73c74ae7455',
+		'ENVIRONMENT',
+		'test',
 		'',
-		'/organizations/Org1/environments/test/virtualhosts/default',
-		'2017-06-27 03:48:18.284+00:00',
-		'-NA-',
-		'2017-06-27 03:48:18.284+00:00',
-		'-NA-',
+		'/organizations/Org1//environments/test/',
+		'2017-06-27 03:14:46.018+00:00',
+		'defaultUser',
+		'2017-06-27 03:14:46.018+00:00',
+		'defaultUser',
 		'ada76573-68e3-4f1a-a0f9-cbc201a97e80'
 		);
 	`)

@@ -91,35 +91,22 @@ func (dbc *dbManager) initDb() error {
 }
 
 // getUnreadyDeployments() returns array of resources that are not yet to be processed
-// TODO make it work with new schema
 func (dbc *dbManager) getUnreadyBlobs() (ids []string, err error) {
 
-	// get unready blob id
 	rows, err := dbc.getDb().Query(`
-	SELECT a.bean_blob_id
-		FROM metadata_runtime_entity_metadata as a
-		LEFT JOIN apid_blob_available as b
-		ON a.bean_blob_id = b.id
-		WHERE b.id IS NULL;
-	`)
-	if err != nil {
-		log.Errorf("DB Query for project_runtime_blob_metadata failed %v", err)
-		return
-	}
-	defer rows.Close()
-	for rows.Next() {
-		var id string
-		rows.Scan(&id)
-		ids = append(ids, id)
-	}
-
-	// get unready resource id
-	rows, err = dbc.getDb().Query(`
-	SELECT a.resource_blob_id
-		FROM metadata_runtime_entity_metadata as a
-		LEFT JOIN apid_blob_available as b
-		ON a.resource_blob_id = b.id
-		WHERE (b.id IS NULL AND a.resource_blob_id IS NOT NULL AND a.resource_blob_id != '');
+	SELECT id FROM (
+			SELECT a.bean_blob_id as id
+			FROM metadata_runtime_entity_metadata as a
+			WHERE a.bean_blob_id NOT IN
+			(SELECT b.id FROM apid_blob_available as b)
+		UNION
+			SELECT a.resource_blob_id as id
+			FROM metadata_runtime_entity_metadata as a
+			WHERE a.resource_blob_id NOT IN
+			(SELECT b.id FROM apid_blob_available as b)
+	)
+	WHERE id != ''
+	;
 	`)
 	if err != nil {
 		log.Errorf("DB Query for project_runtime_blob_metadata failed %v", err)
