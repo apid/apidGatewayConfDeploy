@@ -105,7 +105,7 @@ func (dbc *dbManager) getUnreadyBlobs() (ids []string, err error) {
 			WHERE a.resource_blob_id NOT IN
 			(SELECT b.id FROM apid_blob_available as b)
 	)
-	WHERE id != ''
+	WHERE id IS NOT NULL AND id != ''
 	;
 	`)
 	if err != nil {
@@ -148,14 +148,14 @@ func (dbc *dbManager) getReadyDeployments() ([]DataDeployment, error) {
 				FROM metadata_runtime_entity_metadata as a
 				INNER JOIN apid_blob_available as b
 				ON a.resource_blob_id = b.id
-				WHERE a.resource_blob_id != ""
+				WHERE a.resource_blob_id IS NOT NULL AND a.resource_blob_id != ""
 			INTERSECT
 				SELECT
 					a.id
 				FROM metadata_runtime_entity_metadata as a
 				INNER JOIN apid_blob_available as b
 				ON a.bean_blob_id = b.id
-				WHERE a.resource_blob_id != ""
+				WHERE a.resource_blob_id IS NOT NULL AND a.resource_blob_id != ""
 
 			UNION
 				SELECT
@@ -163,7 +163,7 @@ func (dbc *dbManager) getReadyDeployments() ([]DataDeployment, error) {
 				FROM metadata_runtime_entity_metadata as a
 				INNER JOIN apid_blob_available as b
 				ON a.bean_blob_id = b.id
-				WHERE a.resource_blob_id = ""
+				WHERE a.resource_blob_id IS NULL OR a.resource_blob_id = ""
 		)
 	;
 	`)
@@ -233,24 +233,66 @@ func (dbc *dbManager) getLocalFSLocation(blobId string) (localFsLocation string,
 func dataDeploymentsFromRow(rows *sql.Rows) (deployments []DataDeployment, err error) {
 	for rows.Next() {
 		dep := DataDeployment{}
+		var id, orgId, envId, blobId, blobResourceID, colType, name, revision, path, created, createdBy, updated, updatedBy sql.NullString
 		err = rows.Scan(
-			&dep.ID,
-			&dep.OrgID,
-			&dep.EnvID,
-			&dep.BlobID,
-			&dep.BlobResourceID,
-			&dep.Type,
-			&dep.Name,
-			&dep.Revision,
-			&dep.Path,
-			&dep.Created,
-			&dep.CreatedBy,
-			&dep.Updated,
-			&dep.UpdatedBy,
+			&id,
+			&orgId,
+			&envId,
+			&blobId,
+			&blobResourceID,
+			&colType,
+			&name,
+			&revision,
+			&path,
+			&created,
+			&createdBy,
+			&updated,
+			&updatedBy,
 		)
 		if err != nil {
 			return nil, err
 		}
+
+		if id.Valid {
+			dep.ID = id.String
+		}
+		if orgId.Valid {
+			dep.OrgID = orgId.String
+		}
+		if envId.Valid {
+			dep.EnvID = envId.String
+		}
+		if blobId.Valid {
+			dep.BlobID = blobId.String
+		}
+		if blobResourceID.Valid {
+			dep.BlobResourceID = blobResourceID.String
+		}
+		if colType.Valid {
+			dep.Type = colType.String
+		}
+		if name.Valid {
+			dep.Name = name.String
+		}
+		if revision.Valid {
+			dep.Revision = revision.String
+		}
+		if path.Valid {
+			dep.Path = path.String
+		}
+		if created.Valid {
+			dep.Created = created.String
+		}
+		if createdBy.Valid {
+			dep.CreatedBy = createdBy.String
+		}
+		if updated.Valid {
+			dep.Updated = updated.String
+		}
+		if updatedBy.Valid {
+			dep.UpdatedBy = updatedBy.String
+		}
+
 		deployments = append(deployments, dep)
 	}
 	return

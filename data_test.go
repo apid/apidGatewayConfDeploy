@@ -189,7 +189,7 @@ func initTestDb(db apid.DB) {
 		'73fcac6c-5d9f-44c1-8db0-333efda3e6e8',
 		'',
 		'gcs:SHA-512:39ca7ae89bb9468af34df8bc873748b4035210c91bcc01359c092c1d51364b5f3df06bc69a40621acfaa46791af9ea41bc0f3429a84738ba1a7c8d394859601a',
-		'',
+		NULL,
 		'ORGANIZATION',
 		'Org1',
 		'',
