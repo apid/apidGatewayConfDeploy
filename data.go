@@ -18,6 +18,7 @@ import (
 	"sync"
 
 	"github.com/30x/apid-core"
+	"reflect"
 )
 
 var (
@@ -230,70 +231,34 @@ func (dbc *dbManager) getLocalFSLocation(blobId string) (localFsLocation string,
 	return
 }
 
-func dataDeploymentsFromRow(rows *sql.Rows) (deployments []DataDeployment, err error) {
+func dataDeploymentsFromRow(rows *sql.Rows) ([]DataDeployment, error) {
+	tmp, err := structFromRows(reflect.TypeOf((*DataDeployment)(nil)).Elem(), rows)
+	if err != nil {
+		return nil, err
+	}
+	return tmp.([]DataDeployment), nil
+}
+
+func structFromRows(t reflect.Type, rows *sql.Rows) (interface{}, error) {
+	num := t.NumField()
+	cols := make([]interface{}, num)
+	slice := reflect.New(reflect.SliceOf(t)).Elem()
+	for i := range cols {
+		cols[i] = new(sql.NullString)
+	}
 	for rows.Next() {
-		dep := DataDeployment{}
-		var id, orgId, envId, blobId, blobResourceID, colType, name, revision, path, created, createdBy, updated, updatedBy sql.NullString
-		err = rows.Scan(
-			&id,
-			&orgId,
-			&envId,
-			&blobId,
-			&blobResourceID,
-			&colType,
-			&name,
-			&revision,
-			&path,
-			&created,
-			&createdBy,
-			&updated,
-			&updatedBy,
-		)
+		v := reflect.New(t).Elem()
+		err := rows.Scan(cols...)
 		if err != nil {
 			return nil, err
 		}
-
-		if id.Valid {
-			dep.ID = id.String
+		for i := range cols {
+			p := cols[i].(*sql.NullString)
+			if p.Valid {
+				v.Field(i).SetString(p.String)
+			}
 		}
-		if orgId.Valid {
-			dep.OrgID = orgId.String
-		}
-		if envId.Valid {
-			dep.EnvID = envId.String
-		}
-		if blobId.Valid {
-			dep.BlobID = blobId.String
-		}
-		if blobResourceID.Valid {
-			dep.BlobResourceID = blobResourceID.String
-		}
-		if colType.Valid {
-			dep.Type = colType.String
-		}
-		if name.Valid {
-			dep.Name = name.String
-		}
-		if revision.Valid {
-			dep.Revision = revision.String
-		}
-		if path.Valid {
-			dep.Path = path.String
-		}
-		if created.Valid {
-			dep.Created = created.String
-		}
-		if createdBy.Valid {
-			dep.CreatedBy = createdBy.String
-		}
-		if updated.Valid {
-			dep.Updated = updated.String
-		}
-		if updatedBy.Valid {
-			dep.UpdatedBy = updatedBy.String
-		}
-
-		deployments = append(deployments, dep)
+		slice = reflect.Append(slice, v)
 	}
-	return
+	return slice.Interface(), nil
 }
