@@ -29,7 +29,7 @@ import (
 )
 
 const (
-	blobStoreUri = "blobs/{blobId}/signedurl"
+	blobStoreUri = "/blobs/{blobId}"
 )
 
 type bundleManagerInterface interface {
