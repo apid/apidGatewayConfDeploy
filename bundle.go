@@ -57,11 +57,11 @@ type bundleManager struct {
 }
 
 type blobServerResponse struct {
-	id                       string `json:"id"`
-	kind                     string `json:"kind"`
-	self                     string `json:"self"`
-	signedUrl                string `json:"signedurl"`
-	signedUrlExpiryTimestamp string `json:"signedurlexpirytimestamp"`
+	Id                       string `json:"id"`
+	Kind                     string `json:"kind"`
+	Self                     string `json:"self"`
+	SignedUrl                string `json:"signedurl"`
+	SignedUrlExpiryTimestamp string `json:"signedurlexpirytimestamp"`
 }
 
 func (bm *bundleManager) initializeBundleDownloading() {
@@ -229,6 +229,7 @@ func getSignedURL(blobServerURL string, blobId string, bundleDownloadConnTimeout
 		log.Errorf("Unable to get signed URL from BlobServer %s: %v", uri, err)
 		return "", err
 	}
+	defer surl.Close()
 
 	body, err := ioutil.ReadAll(surl)
 	if err != nil {
@@ -242,7 +243,7 @@ func getSignedURL(blobServerURL string, blobId string, bundleDownloadConnTimeout
 		return "", err
 	}
 
-	return string(res.signedUrl), nil
+	return res.SignedUrl, nil
 }
 
 // downloadFromURI involves retrieving the signed URL for the blob, and storing the resource locally
