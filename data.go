@@ -18,6 +18,7 @@ import (
 	"sync"
 
 	"github.com/30x/apid-core"
+	"reflect"
 )
 
 var (
@@ -105,7 +106,7 @@ func (dbc *dbManager) getUnreadyBlobs() (ids []string, err error) {
 			WHERE a.resource_blob_id NOT IN
 			(SELECT b.id FROM apid_blob_available as b)
 	)
-	WHERE id != ''
+	WHERE id IS NOT NULL AND id != ''
 	;
 	`)
 	if err != nil {
@@ -148,14 +149,14 @@ func (dbc *dbManager) getReadyDeployments() ([]DataDeployment, error) {
 				FROM metadata_runtime_entity_metadata as a
 				INNER JOIN apid_blob_available as b
 				ON a.resource_blob_id = b.id
-				WHERE a.resource_blob_id != ""
+				WHERE a.resource_blob_id IS NOT NULL AND a.resource_blob_id != ""
 			INTERSECT
 				SELECT
 					a.id
 				FROM metadata_runtime_entity_metadata as a
 				INNER JOIN apid_blob_available as b
 				ON a.bean_blob_id = b.id
-				WHERE a.resource_blob_id != ""
+				WHERE a.resource_blob_id IS NOT NULL AND a.resource_blob_id != ""
 
 			UNION
 				SELECT
@@ -163,7 +164,7 @@ func (dbc *dbManager) getReadyDeployments() ([]DataDeployment, error) {
 				FROM metadata_runtime_entity_metadata as a
 				INNER JOIN apid_blob_available as b
 				ON a.bean_blob_id = b.id
-				WHERE a.resource_blob_id = ""
+				WHERE a.resource_blob_id IS NULL OR a.resource_blob_id = ""
 		)
 	;
 	`)
@@ -230,28 +231,34 @@ func (dbc *dbManager) getLocalFSLocation(blobId string) (localFsLocation string,
 	return
 }
 
-func dataDeploymentsFromRow(rows *sql.Rows) (deployments []DataDeployment, err error) {
+func dataDeploymentsFromRow(rows *sql.Rows) ([]DataDeployment, error) {
+	tmp, err := structFromRows(reflect.TypeOf((*DataDeployment)(nil)).Elem(), rows)
+	if err != nil {
+		return nil, err
+	}
+	return tmp.([]DataDeployment), nil
+}
+
+func structFromRows(t reflect.Type, rows *sql.Rows) (interface{}, error) {
+	num := t.NumField()
+	cols := make([]interface{}, num)
+	slice := reflect.New(reflect.SliceOf(t)).Elem()
+	for i := range cols {
+		cols[i] = new(sql.NullString)
+	}
 	for rows.Next() {
-		dep := DataDeployment{}
-		err = rows.Scan(
-			&dep.ID,
-			&dep.OrgID,
-			&dep.EnvID,
-			&dep.BlobID,
-			&dep.BlobResourceID,
-			&dep.Type,
-			&dep.Name,
-			&dep.Revision,
-			&dep.Path,
-			&dep.Created,
-			&dep.CreatedBy,
-			&dep.Updated,
-			&dep.UpdatedBy,
-		)
+		v := reflect.New(t).Elem()
+		err := rows.Scan(cols...)
 		if err != nil {
 			return nil, err
 		}
-		deployments = append(deployments, dep)
+		for i := range cols {
+			p := cols[i].(*sql.NullString)
+			if p.Valid {
+				v.Field(i).SetString(p.String)
+			}
+		}
+		slice = reflect.Append(slice, v)
 	}
-	return
+	return slice.Interface(), nil
 }
