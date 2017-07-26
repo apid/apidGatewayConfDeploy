@@ -15,6 +15,7 @@ package apiGatewayConfDeploy
 
 import (
 	"encoding/base64"
+	"encoding/json"
 	"fmt"
 	"io"
 	"io/ioutil"
@@ -28,7 +29,7 @@ import (
 )
 
 const (
-	blobStoreUri = "/v1/blobs/{blobId}/signedurl"
+	blobStoreUri = "blobs/{blobId}/signedurl"
 )
 
 type bundleManagerInterface interface {
@@ -53,6 +54,14 @@ type bundleManager struct {
 	downloadQueue             chan *DownloadRequest
 	isClosed                  *int32
 	workers                   []*BundleDownloader
+}
+
+type blobServerResponse struct {
+	id                       string `json:"id"`
+	kind                     string `json:"kind"`
+	self                     string `json:"self"`
+	signedUrl                string `json:"signedurl"`
+	signedUrlExpiryTimestamp string `json:"signedurlexpirytimestamp"`
 }
 
 func (bm *bundleManager) initializeBundleDownloading() {
@@ -211,7 +220,6 @@ func getSignedURL(blobServerURL string, blobId string, bundleDownloadConnTimeout
 	blobUri.Path += strings.Replace(blobStoreUri, "{blobId}", blobId, 1)
 	parameters := url.Values{}
 	parameters.Add("action", "GET")
-	parameters.Add("key", blobId)
 	blobUri.RawQuery = parameters.Encode()
 
 	uri := blobUri.String()
@@ -222,12 +230,19 @@ func getSignedURL(blobServerURL string, blobId string, bundleDownloadConnTimeout
 		return "", err
 	}
 
-	signedURL, err := ioutil.ReadAll(surl)
+	body, err := ioutil.ReadAll(surl)
 	if err != nil {
 		log.Errorf("Invalid response from BlobServer for {%s} error: {%v}", uri, err)
 		return "", err
 	}
-	return string(signedURL), nil
+	res := blobServerResponse{}
+	err = json.Unmarshal(body, &res)
+	if err != nil {
+		log.Errorf("Invalid response from BlobServer for {%s} error: {%v}", uri, err)
+		return "", err
+	}
+
+	return string(res.signedUrl), nil
 }
 
 // downloadFromURI involves retrieving the signed URL for the blob, and storing the resource locally
