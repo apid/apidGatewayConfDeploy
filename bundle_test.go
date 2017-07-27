@@ -18,6 +18,7 @@ import (
 	"net/http"
 
 	"bytes"
+	"encoding/json"
 	"github.com/gorilla/mux"
 	. "github.com/onsi/ginkgo"
 	. "github.com/onsi/gomega"
@@ -166,7 +167,18 @@ func (b *dummyBlobServer) returnSigned(w http.ResponseWriter, r *http.Request) {
 
 	uriString := strings.Replace(bundleTestUrl+b.signedEndpoint, "{blobId}", blobId, 1)
 	log.Debug("dummyBlobServer returnSigned: " + uriString)
-	_, err := io.Copy(w, bytes.NewReader([]byte(uriString)))
+
+	res := blobServerResponse{
+		Id:                       blobId,
+		Kind:                     "Blob",
+		Self:                     r.RequestURI,
+		SignedUrl:                uriString,
+		SignedUrlExpiryTimestamp: time.Now().Add(3 * time.Hour).Format(time.RFC3339),
+	}
+
+	resBytes, err := json.Marshal(res)
+	Expect(err).Should(Succeed())
+	_, err = io.Copy(w, bytes.NewReader(resBytes))
 	Expect(err).Should(Succeed())
 	w.Header().Set("Content-Type", headerSteam)
 }
