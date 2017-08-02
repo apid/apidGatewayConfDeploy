@@ -50,6 +50,7 @@ var (
 	debounceDuration time.Duration
 	apiServerBaseURI *url.URL
 	eventHandler     *apigeeSyncHandler
+	apidClusterId    string
 )
 
 func init() {
@@ -69,6 +70,10 @@ func initPlugin(s apid.Services) (apid.PluginData, error) {
 
 	if !config.IsSet(configBlobServerBaseURI) {
 		return pluginData, fmt.Errorf("Missing required config value: %s", configBlobServerBaseURI)
+	}
+
+	if !config.IsSet(configApidClusterID) {
+		return pluginData, fmt.Errorf("Missing required config value: %s", configApidClusterID)
 	}
 
 	var err error
@@ -106,6 +111,8 @@ func initPlugin(s apid.Services) (apid.PluginData, error) {
 	}
 
 	log.Debug("apiServerBaseURI = " + apiServerBaseURI.String())
+
+	apidClusterId = config.GetString(configApidClusterID)
 
 	// initialize db manager
 

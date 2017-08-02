@@ -22,6 +22,7 @@ import (
 	"io/ioutil"
 	"net/http"
 	"net/url"
+	"regexp"
 	"strconv"
 	"sync/atomic"
 	"time"
@@ -38,14 +39,19 @@ const (
 )
 
 const (
-	deploymentsEndpoint = "/configurations"
-	blobEndpointPath    = "/blobs"
-	blobEndpoint        = blobEndpointPath + "/{blobId}"
+	deploymentsEndpoint  = "/configurations"
+	blobEndpointPath     = "/blobs"
+	blobEndpoint         = blobEndpointPath + "/{blobId}"
+	configStatusEndpoint = "/configstatus"
+	heartbeatEndpoint    = "/heartbeat/{uuid}"
+	registerEndpoint     = "/register/{uuid}"
 )
 
 const (
 	API_ERR_BAD_BLOCK = iota + 1
 	API_ERR_INTERNAL
+	API_ERR_INVALID_PARAMETERS
+	API_ERR_FROM_TRACKER
 )
 
 const (
@@ -94,6 +100,12 @@ type ApiDeploymentResponse struct {
 	ApiDeploymentsResponse []ApiDeploymentDetails `json:"contents"`
 }
 
+type PutConfigStatusResponse struct {
+	Kind string
+	Self string
+	//Contents []
+}
+
 //TODO add support for block and subscriber
 type apiManagerInterface interface {
 	InitAPI()
@@ -102,14 +114,18 @@ type apiManagerInterface interface {
 }
 
 type apiManager struct {
-	dbMan               dbManagerInterface
-	deploymentsEndpoint string
-	blobEndpoint        string
-	eTag                int64
-	deploymentsChanged  chan interface{}
-	addSubscriber       chan chan deploymentsResult
-	removeSubscriber    chan chan deploymentsResult
-	apiInitialized      bool
+	dbMan                dbManagerInterface
+	trackerCl            trackerClientInterface
+	deploymentsEndpoint  string
+	blobEndpoint         string
+	configStatusEndpoint string
+	heartbeatEndpoint    string
+	registerEndpoint     string
+	eTag                 int64
+	deploymentsChanged   chan interface{}
+	addSubscriber        chan chan deploymentsResult
+	removeSubscriber     chan chan deploymentsResult
+	apiInitialized       bool
 }
 
 func (a *apiManager) InitAPI() {
@@ -118,6 +134,9 @@ func (a *apiManager) InitAPI() {
 	}
 	services.API().HandleFunc(a.deploymentsEndpoint, a.apiGetCurrentDeployments).Methods("GET")
 	services.API().HandleFunc(a.blobEndpoint, a.apiReturnBlobData).Methods("GET")
+	services.API().HandleFunc(a.configStatusEndpoint, a.apiPutConfigStatus).Methods("PUT")
+	services.API().HandleFunc(a.heartbeatEndpoint, a.apiPutHeartbeat).Methods("PUT")
+	services.API().HandleFunc(a.registerEndpoint, a.apiPostRegister).Methods("POST")
 	a.apiInitialized = true
 	log.Debug("API endpoints initialized")
 }
@@ -346,6 +365,105 @@ func (a *apiManager) sendDeployments(w http.ResponseWriter, dataDeps []DataDeplo
 	w.Write(b)
 }
 
+func (a *apiManager) apiPostRegister(w http.ResponseWriter, r *http.Request) {
+	vars := mux.Vars(r)
+	uuid := vars["uuid"]
+	if !isValidUuid(uuid) {
+		a.writeError(w, http.StatusBadRequest, API_ERR_INVALID_PARAMETERS, "Bad/Missing gateway uuid")
+		return
+	}
+	created := r.Header.Get("created")
+	if created == "" {
+		a.writeError(w, http.StatusBadRequest, API_ERR_INVALID_PARAMETERS, "Bad/Missing created")
+		return
+	}
+	name := r.Header.Get("name")
+	if name == "" {
+		a.writeError(w, http.StatusBadRequest, API_ERR_INVALID_PARAMETERS, "Bad/Missing name")
+		return
+	}
+
+	pod := r.Header.Get("pod")
+	podType := r.Header.Get("podtype")
+	serviceType := r.Header.Get("type")
+
+	trackerResp := a.trackerCl.postRegister(uuid, pod, created, name, podType, serviceType)
+	switch trackerResp.code {
+	case http.StatusOK:
+		a.writePostRegisterResp(w, trackerResp)
+	default:
+		log.Infof("putConfigStatus code: %v Reason: %v", trackerResp.code, trackerResp.errString)
+		a.writeError(w, trackerResp.code, API_ERR_FROM_TRACKER, trackerResp.errString)
+	}
+
+}
+
+func (a *apiManager) apiPutConfigStatus(w http.ResponseWriter, r *http.Request) {
+
+	configId := r.URL.Query().Get("configid")
+	if configId == "" {
+		a.writeError(w, http.StatusBadRequest, API_ERR_INVALID_PARAMETERS, "Bad/Missing configId")
+		return
+	}
+	uuid := r.Header.Get("uuid")
+	if !isValidUuid(uuid) {
+		a.writeError(w, http.StatusBadRequest, API_ERR_INVALID_PARAMETERS, "Bad/Missing gateway uuid")
+		return
+	}
+	status := r.Header.Get("status")
+	if status == "" {
+		a.writeError(w, http.StatusBadRequest, API_ERR_INVALID_PARAMETERS, "Bad/Missing status")
+		return
+	}
+	created := r.Header.Get("created")
+	if created == "" {
+		a.writeError(w, http.StatusBadRequest, API_ERR_INVALID_PARAMETERS, "Bad/Missing created")
+		return
+	}
+	trackerResp := a.trackerCl.putConfigStatus(configId, status, uuid, created)
+	switch trackerResp.code {
+	case http.StatusOK:
+		a.writeConfigStatusResp(w, trackerResp)
+	default:
+		log.Infof("putConfigStatus code: %v Reason: %v", trackerResp.code, trackerResp.errString)
+		a.writeError(w, trackerResp.code, API_ERR_FROM_TRACKER, trackerResp.errString)
+	}
+}
+
+func (a *apiManager) apiPutHeartbeat(w http.ResponseWriter, r *http.Request) {
+	vars := mux.Vars(r)
+	uuid := vars["uuid"]
+	if !isValidUuid(uuid) {
+		a.writeError(w, http.StatusBadRequest, API_ERR_INVALID_PARAMETERS, "Bad/Missing gateway uuid")
+		return
+	}
+	updated := r.Header.Get("updated")
+	if updated == "" {
+		a.writeError(w, http.StatusBadRequest, API_ERR_INVALID_PARAMETERS, "Bad/Missing updated")
+		return
+	}
+	trackerResp := a.trackerCl.putHeartbeat(uuid, updated)
+	switch trackerResp.code {
+	case http.StatusOK:
+		a.writePutHeartbeatResp(w, trackerResp)
+	default:
+		log.Infof("putConfigStatus code: %v Reason: %v", trackerResp.code, trackerResp.errString)
+		a.writeError(w, trackerResp.code, API_ERR_FROM_TRACKER, trackerResp.errString)
+	}
+}
+
+func (a *apiManager) writeConfigStatusResp(w http.ResponseWriter, tr trackerResponse) {
+	w.Header().Add("Content-type", tr.contentType)
+}
+
+func (a *apiManager) writePostRegisterResp(w http.ResponseWriter, tr trackerResponse) {
+	w.Header().Add("Content-type", tr.contentType)
+}
+
+func (a *apiManager) writePutHeartbeatResp(w http.ResponseWriter, tr trackerResponse) {
+	w.Header().Add("Content-type", tr.contentType)
+}
+
 // call whenever the list of deployments changes
 func (a *apiManager) incrementETag() string {
 	e := atomic.AddInt64(&a.eTag, 1)
@@ -393,4 +511,12 @@ func getHttpHost() string {
 	}
 	proto = proto + "://" + config.GetString(configAPIListen)
 	return proto
+}
+
+func isValidUuid(uuid string) bool {
+	r, err := regexp.Compile("^[a-fA-F0-9]{8}-[a-fA-F0-9]{4}-4[a-fA-F0-9]{3}-[8|9|aA|bB][a-fA-F0-9]{3}-[a-fA-F0-9]{12}$")
+	if err != nil {
+		return false
+	}
+	return r.MatchString(uuid)
 }
