@@ -2,7 +2,6 @@ package apiGatewayConfDeploy
 
 import (
 	"github.com/30x/apid-core"
-	"github.com/30x/apidApigeeSync"
 	"io/ioutil"
 	"net/http"
 	"net/url"
@@ -179,8 +178,8 @@ type tokenEventHandler struct {
 }
 
 func (h *tokenEventHandler) Handle(e apid.Event) {
-	if tokenEvent, ok := e.(*apidApigeeSync.TokenEvent); ok {
-		h.token = tokenEvent.AccessToken
+	if token, ok := e.(string); ok {
+		h.token = token
 	}
 }
 
