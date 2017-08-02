@@ -129,6 +129,29 @@ func initPlugin(s apid.Services) (apid.PluginData, error) {
 	}
 	apidClusterId = config.GetString(configApidClusterID)
 
+	// initialize token handler
+
+	tokenHandler := &tokenEventHandler{}
+	tokenHandler.initListener(services)
+
+	// initialize tracker client
+
+	client := &trackerClient{
+		trackerBaseUrl: configApiServerBaseURI,
+		clusterId:      apidClusterId,
+		httpclient: &http.Client{
+			Transport: &http.Transport{
+				MaxIdleConnsPerHost: maxIdleConnsPerHost,
+			},
+			Timeout: httpTimeout,
+			CheckRedirect: func(req *http.Request, _ []*http.Request) error {
+				req.Header.Set("Authorization", tokenHandler.getBearerToken())
+				return nil
+			},
+		},
+		handler: tokenHandler,
+	}
+
 	// initialize db manager
 
 	dbMan := &dbManager{
@@ -139,14 +162,18 @@ func initPlugin(s apid.Services) (apid.PluginData, error) {
 	// initialize api manager
 
 	apiMan := &apiManager{
-		dbMan:               dbMan,
-		deploymentsEndpoint: deploymentsEndpoint,
-		blobEndpoint:        blobEndpoint,
-		eTag:                0,
-		deploymentsChanged:  make(chan interface{}, 5),
-		addSubscriber:       make(chan chan deploymentsResult),
-		removeSubscriber:    make(chan chan deploymentsResult),
-		apiInitialized:      false,
+		dbMan:                dbMan,
+		trackerCl:            client,
+		deploymentsEndpoint:  deploymentsEndpoint,
+		blobEndpoint:         blobEndpoint,
+		configStatusEndpoint: configStatusEndpoint,
+		heartbeatEndpoint:    heartbeatEndpoint,
+		registerEndpoint:     registerEndpoint,
+		eTag:                 0,
+		deploymentsChanged:   make(chan interface{}, 5),
+		addSubscriber:        make(chan chan deploymentsResult),
+		removeSubscriber:     make(chan chan deploymentsResult),
+		apiInitialized:       false,
 	}
 
 	// initialize bundle manager
