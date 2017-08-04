@@ -56,7 +56,7 @@ const (
 
 const (
 	sqlTimeFormat    = "2006-01-02 15:04:05.999 -0700 MST"
-	iso8601          = "2 mnn006-01-02T15:04:05.999Z07:00"
+	iso8601          = "2006-01-02T15:04:05.999Z07:00"
 	sqliteTimeFormat = "2006-01-02 15:04:05.999-07:00"
 	changeTimeFormat = "2006-01-02 15:04:05.999"
 )
@@ -98,12 +98,6 @@ type ApiDeploymentResponse struct {
 	Kind                   string                 `json:"kind"`
 	Self                   string                 `json:"self"`
 	ApiDeploymentsResponse []ApiDeploymentDetails `json:"contents"`
-}
-
-type PutConfigStatusResponse struct {
-	Kind string
-	Self string
-	//Contents []
 }
 
 //TODO add support for block and subscriber
@@ -449,7 +443,7 @@ func (a *apiManager) apiPutHeartbeat(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	reported := r.Header.Get("reportedTime")
-	if reported == "" {
+	if reported == "" || !isIso8601(reported) {
 		a.writeError(w, http.StatusBadRequest, API_ERR_INVALID_PARAMETERS, "Bad/Missing reportedTime")
 		return
 	}
@@ -547,6 +541,18 @@ func isValidUuid(uuid string) bool {
 	return r.MatchString(uuid)
 }
 
+func isIso8601(t string) bool {
+
+	if _, err := time.Parse(iso8601, t); err == nil {
+		return true
+	}
+	if _, err := time.Parse(time.RFC3339, t); err == nil {
+		return true
+	}
+
+	return false
+}
+
 type registerBody struct {
 	Uuid         string `json:"uuid"`
 	Pod          string `json:"pod"`
@@ -562,7 +568,7 @@ func (body *registerBody) validateBody(uuid string) (bool, string) {
 		return false, "UUID in path mismatch UUID in body"
 	case !isValidUuid(body.Uuid):
 		return false, "Bad/Missing gateway UUID"
-	case body.ReportedTime == "":
+	case body.ReportedTime == "" || !isIso8601(body.ReportedTime):
 		return false, "Bad/Missing gateway ReportedTimeService"
 	}
 	return true, ""
