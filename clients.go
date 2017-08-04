@@ -11,7 +11,7 @@ import (
 
 const (
 	configBearerToken           = "apigeesync_bearer_token"
-	trackerConfigStatusEndpoint = "/serviceconfigstatus"
+	trackerConfigStatusEndpoint = "/configurations/status"
 	trackerHeartbeatEndpoint    = "/serviceheartbeat/{uuid}"
 	trackerRegisterEndpoint     = "/serviceregister/{uuid}"
 )
@@ -126,11 +126,11 @@ func parseTrackerResponse(r *http.Response) *trackerResponse {
 		return (internalError(err))
 	}
 	res := &trackerResponse{}
+	res.contentType = r.Header.Get("Content-type")
 	switch r.StatusCode {
 	case http.StatusOK:
 		res.code = r.StatusCode
 		res.body = trackerBody
-		res.contentType = r.Header.Get("Content-type")
 	case http.StatusUnauthorized, http.StatusForbidden:
 		res.code = http.StatusInternalServerError
 		res.body = []byte("apid token rejected by tracker")
@@ -143,7 +143,6 @@ func parseTrackerResponse(r *http.Response) *trackerResponse {
 		log.Infof("Abnormal Response from Tracker: %v, %v", r.StatusCode, trackerBody)
 		res.code = r.StatusCode
 		res.body = trackerBody
-		res.contentType = r.Header.Get("Content-type")
 	}
 	return res
 }
