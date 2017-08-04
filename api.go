@@ -56,7 +56,7 @@ const (
 
 const (
 	sqlTimeFormat    = "2006-01-02 15:04:05.999 -0700 MST"
-	iso8601          = "2006-01-02T15:04:05.999Z07:00"
+	iso8601          = "2 mnn006-01-02T15:04:05.999Z07:00"
 	sqliteTimeFormat = "2006-01-02 15:04:05.999-07:00"
 	changeTimeFormat = "2006-01-02 15:04:05.999"
 )
@@ -136,7 +136,7 @@ func (a *apiManager) InitAPI() {
 	services.API().HandleFunc(a.blobEndpoint, a.apiReturnBlobData).Methods("GET")
 	services.API().HandleFunc(a.configStatusEndpoint, a.apiPutConfigStatus).Methods("PUT")
 	services.API().HandleFunc(a.heartbeatEndpoint, a.apiPutHeartbeat).Methods("PUT")
-	services.API().HandleFunc(a.registerEndpoint, a.apiPostRegister).Methods("POST")
+	services.API().HandleFunc(a.registerEndpoint, a.apiPutRegister).Methods("POST")
 	a.apiInitialized = true
 	log.Debug("API endpoints initialized")
 }
@@ -365,68 +365,79 @@ func (a *apiManager) sendDeployments(w http.ResponseWriter, dataDeps []DataDeplo
 	w.Write(b)
 }
 
-func (a *apiManager) apiPostRegister(w http.ResponseWriter, r *http.Request) {
+func (a *apiManager) apiPutRegister(w http.ResponseWriter, r *http.Request) {
 	vars := mux.Vars(r)
 	uuid := vars["uuid"]
-	if !isValidUuid(uuid) {
-		a.writeError(w, http.StatusBadRequest, API_ERR_INVALID_PARAMETERS, "Bad/Missing gateway uuid")
-		return
-	}
-	created := r.Header.Get("created")
-	if created == "" {
-		a.writeError(w, http.StatusBadRequest, API_ERR_INVALID_PARAMETERS, "Bad/Missing created")
-		return
-	}
-	name := r.Header.Get("name")
-	if name == "" {
-		a.writeError(w, http.StatusBadRequest, API_ERR_INVALID_PARAMETERS, "Bad/Missing name")
+
+	// parse body
+
+	body := r.Body
+	defer body.Close()
+	bodyBytes, err := ioutil.ReadAll(body)
+	if err != nil {
+		log.Errorf("apiPutRegister error: %v", err)
+		a.writeError(w, http.StatusInternalServerError, API_ERR_INTERNAL, "Failed to read request body.")
 		return
 	}
 
-	pod := r.Header.Get("pod")
-	podType := r.Header.Get("podtype")
-	serviceType := r.Header.Get("type")
+	reqBody := &registerBody{}
+	err = json.Unmarshal(bodyBytes, reqBody)
+	if err != nil {
+		log.Errorf("apiPutRegister error: %v", err)
+		a.writeError(w, http.StatusInternalServerError, API_ERR_INTERNAL, "Failed to read request body.")
+		return
+	}
 
-	trackerResp := a.trackerCl.postRegister(uuid, pod, created, name, podType, serviceType)
+	isValid, reason := reqBody.validateBody(uuid)
+	if !isValid {
+		a.writeError(w, http.StatusBadRequest, API_ERR_INVALID_PARAMETERS, reason)
+		return
+	}
+
+	trackerResp := a.trackerCl.putRegister(uuid, reqBody)
 	switch trackerResp.code {
 	case http.StatusOK:
-		a.writePostRegisterResp(w, trackerResp)
+		a.writePutRegisterResp(w, trackerResp)
 	default:
-		log.Infof("putConfigStatus code: %v Reason: %v", trackerResp.code, trackerResp.errString)
-		a.writeError(w, trackerResp.code, API_ERR_FROM_TRACKER, trackerResp.errString)
+		log.Infof("apiPutRegister code: %v Reason: %v", trackerResp.code, trackerResp.body)
+		a.writeError(w, trackerResp.code, API_ERR_FROM_TRACKER, string(trackerResp.body))
 	}
 
 }
 
 func (a *apiManager) apiPutConfigStatus(w http.ResponseWriter, r *http.Request) {
 
-	configId := r.URL.Query().Get("configid")
-	if configId == "" {
-		a.writeError(w, http.StatusBadRequest, API_ERR_INVALID_PARAMETERS, "Bad/Missing configId")
+	// parse body
+
+	body := r.Body
+	defer body.Close()
+	bodyBytes, err := ioutil.ReadAll(body)
+	if err != nil {
+		log.Errorf("apiPutConfigStatus error: %v", err)
+		a.writeError(w, http.StatusInternalServerError, API_ERR_INTERNAL, "Failed to read request body.")
 		return
 	}
-	uuid := r.Header.Get("uuid")
-	if !isValidUuid(uuid) {
-		a.writeError(w, http.StatusBadRequest, API_ERR_INVALID_PARAMETERS, "Bad/Missing gateway uuid")
+
+	reqBody := &configStatusBody{}
+	err = json.Unmarshal(bodyBytes, reqBody)
+	if err != nil {
+		log.Errorf("apiPutConfigStatus error: %v", err)
+		a.writeError(w, http.StatusInternalServerError, API_ERR_INTERNAL, "Failed to read request body.")
 		return
 	}
-	status := r.Header.Get("status")
-	if status == "" {
-		a.writeError(w, http.StatusBadRequest, API_ERR_INVALID_PARAMETERS, "Bad/Missing status")
+
+	isValid, reason := reqBody.validateBody()
+	if !isValid {
+		a.writeError(w, http.StatusBadRequest, API_ERR_INVALID_PARAMETERS, reason)
 		return
 	}
-	created := r.Header.Get("created")
-	if created == "" {
-		a.writeError(w, http.StatusBadRequest, API_ERR_INVALID_PARAMETERS, "Bad/Missing created")
-		return
-	}
-	trackerResp := a.trackerCl.putConfigStatus(configId, status, uuid, created)
+	trackerResp := a.trackerCl.putConfigStatus(reqBody)
 	switch trackerResp.code {
 	case http.StatusOK:
 		a.writeConfigStatusResp(w, trackerResp)
 	default:
-		log.Infof("putConfigStatus code: %v Reason: %v", trackerResp.code, trackerResp.errString)
-		a.writeError(w, trackerResp.code, API_ERR_FROM_TRACKER, trackerResp.errString)
+		log.Infof("apiPutConfigStatus code: %v Reason: %v", trackerResp.code, trackerResp.body)
+		a.writeError(w, trackerResp.code, API_ERR_FROM_TRACKER, string(trackerResp.body))
 	}
 }
 
@@ -437,31 +448,46 @@ func (a *apiManager) apiPutHeartbeat(w http.ResponseWriter, r *http.Request) {
 		a.writeError(w, http.StatusBadRequest, API_ERR_INVALID_PARAMETERS, "Bad/Missing gateway uuid")
 		return
 	}
-	updated := r.Header.Get("updated")
-	if updated == "" {
-		a.writeError(w, http.StatusBadRequest, API_ERR_INVALID_PARAMETERS, "Bad/Missing updated")
+	reported := r.Header.Get("reportedTime")
+	if reported == "" {
+		a.writeError(w, http.StatusBadRequest, API_ERR_INVALID_PARAMETERS, "Bad/Missing reportedTime")
 		return
 	}
-	trackerResp := a.trackerCl.putHeartbeat(uuid, updated)
+	trackerResp := a.trackerCl.putHeartbeat(uuid, reported)
 	switch trackerResp.code {
 	case http.StatusOK:
 		a.writePutHeartbeatResp(w, trackerResp)
 	default:
-		log.Infof("putConfigStatus code: %v Reason: %v", trackerResp.code, trackerResp.errString)
-		a.writeError(w, trackerResp.code, API_ERR_FROM_TRACKER, trackerResp.errString)
+		log.Infof("apiPutHeartbeat code: %v Reason: %v", trackerResp.code, trackerResp.body)
+		a.writeError(w, trackerResp.code, API_ERR_FROM_TRACKER, string(trackerResp.body))
 	}
 }
 
-func (a *apiManager) writeConfigStatusResp(w http.ResponseWriter, tr trackerResponse) {
+func (a *apiManager) writeConfigStatusResp(w http.ResponseWriter, tr *trackerResponse) {
 	w.Header().Add("Content-type", tr.contentType)
+	_, err := w.Write(tr.body)
+	if err != nil {
+		log.Errorf("failed to write response: %v", err)
+		a.writeError(w, http.StatusInternalServerError, API_ERR_INTERNAL, err.Error())
+	}
 }
 
-func (a *apiManager) writePostRegisterResp(w http.ResponseWriter, tr trackerResponse) {
+func (a *apiManager) writePutRegisterResp(w http.ResponseWriter, tr *trackerResponse) {
 	w.Header().Add("Content-type", tr.contentType)
+	_, err := w.Write(tr.body)
+	if err != nil {
+		log.Errorf("failed to write response: %v", err)
+		a.writeError(w, http.StatusInternalServerError, API_ERR_INTERNAL, err.Error())
+	}
 }
 
-func (a *apiManager) writePutHeartbeatResp(w http.ResponseWriter, tr trackerResponse) {
+func (a *apiManager) writePutHeartbeatResp(w http.ResponseWriter, tr *trackerResponse) {
 	w.Header().Add("Content-type", tr.contentType)
+	_, err := w.Write(tr.body)
+	if err != nil {
+		log.Errorf("failed to write response: %v", err)
+		a.writeError(w, http.StatusInternalServerError, API_ERR_INTERNAL, err.Error())
+	}
 }
 
 // call whenever the list of deployments changes
@@ -519,4 +545,57 @@ func isValidUuid(uuid string) bool {
 		return false
 	}
 	return r.MatchString(uuid)
+}
+
+type registerBody struct {
+	Uuid         string `json:"uuid"`
+	Pod          string `json:"pod"`
+	PodType      string `json:"podType"`
+	ReportedTime string `json:"reportedTime"`
+	Name         string `json:"name"`
+	Type         string `json:"type"`
+}
+
+func (body *registerBody) validateBody(uuid string) (bool, string) {
+	switch {
+	case uuid != body.Uuid:
+		return false, "UUID in path mismatch UUID in body"
+	case !isValidUuid(body.Uuid):
+		return false, "Bad/Missing gateway UUID"
+	case body.ReportedTime == "":
+		return false, "Bad/Missing gateway ReportedTimeService"
+	}
+	return true, ""
+}
+
+type configStatusBody struct {
+	StatusDetails []statusDetailsJson `json:"statusDetails"`
+	ServiceId     string              `json:"serviceId"`
+	ReportedTime  string              `json:"reportedTime"`
+}
+
+type statusDetailsJson struct {
+	Status          string `json:"status"`
+	ConfigurationId string `json:"configurationId"`
+	ErrorCode       string `json:"errorCode"`
+	Message         string `json:"message"`
+}
+
+func (body *configStatusBody) validateBody() (bool, string) {
+	switch {
+	case !isValidUuid(body.ServiceId):
+		return false, "Bad/Missing gateway ServiceId"
+	case body.ReportedTime == "":
+		return false, "Bad/Missing gateway ReportedTimeService"
+	}
+
+	for _, s := range body.StatusDetails {
+		switch {
+		case s.Status == "":
+			return false, "Bad/Missing configuration Status"
+		case s.ConfigurationId == "":
+			return false, "Bad/Missing configuration ConfigurationId"
+		}
+	}
+	return true, ""
 }
