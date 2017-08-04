@@ -14,7 +14,6 @@ const (
 	trackerConfigStatusEndpoint = "/serviceconfigstatus"
 	trackerHeartbeatEndpoint    = "/serviceheartbeat/{uuid}"
 	trackerRegisterEndpoint     = "/serviceregister/{uuid}"
-	ApigeeSyncTokenSelector     = "ApigeeSyncToken"
 )
 
 type trackerClientInterface interface {
