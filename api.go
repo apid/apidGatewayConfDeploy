@@ -42,7 +42,7 @@ const (
 	deploymentsEndpoint  = "/configurations"
 	blobEndpointPath     = "/blobs"
 	blobEndpoint         = blobEndpointPath + "/{blobId}"
-	configStatusEndpoint = "/configstatus"
+	configStatusEndpoint = "/configurations/status"
 	heartbeatEndpoint    = "/heartbeat/{uuid}"
 	registerEndpoint     = "/register/{uuid}"
 )
@@ -363,8 +363,7 @@ func (a *apiManager) apiPutRegister(w http.ResponseWriter, r *http.Request) {
 	vars := mux.Vars(r)
 	uuid := vars["uuid"]
 
-	// parse body
-
+	// parse & validate body
 	body := r.Body
 	defer body.Close()
 	bodyBytes, err := ioutil.ReadAll(body)
@@ -388,7 +387,10 @@ func (a *apiManager) apiPutRegister(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// connect to tracker
 	trackerResp := a.trackerCl.putRegister(uuid, reqBody)
+
+	// write response
 	switch trackerResp.code {
 	case http.StatusOK:
 		a.writePutRegisterResp(w, trackerResp)
@@ -401,8 +403,7 @@ func (a *apiManager) apiPutRegister(w http.ResponseWriter, r *http.Request) {
 
 func (a *apiManager) apiPutConfigStatus(w http.ResponseWriter, r *http.Request) {
 
-	// parse body
-
+	// parse & validate body
 	body := r.Body
 	defer body.Close()
 	bodyBytes, err := ioutil.ReadAll(body)
@@ -425,7 +426,11 @@ func (a *apiManager) apiPutConfigStatus(w http.ResponseWriter, r *http.Request) 
 		a.writeError(w, http.StatusBadRequest, API_ERR_INVALID_PARAMETERS, reason)
 		return
 	}
+
+	// connect to tracker
 	trackerResp := a.trackerCl.putConfigStatus(reqBody)
+
+	// write response
 	switch trackerResp.code {
 	case http.StatusOK:
 		a.writeConfigStatusResp(w, trackerResp)
@@ -436,6 +441,7 @@ func (a *apiManager) apiPutConfigStatus(w http.ResponseWriter, r *http.Request) 
 }
 
 func (a *apiManager) apiPutHeartbeat(w http.ResponseWriter, r *http.Request) {
+	// parse & validate
 	vars := mux.Vars(r)
 	uuid := vars["uuid"]
 	if !isValidUuid(uuid) {
@@ -447,7 +453,11 @@ func (a *apiManager) apiPutHeartbeat(w http.ResponseWriter, r *http.Request) {
 		a.writeError(w, http.StatusBadRequest, API_ERR_INVALID_PARAMETERS, "Bad/Missing reportedTime")
 		return
 	}
+
+	// connect to tracker
 	trackerResp := a.trackerCl.putHeartbeat(uuid, reported)
+
+	// write response
 	switch trackerResp.code {
 	case http.StatusOK:
 		a.writePutHeartbeatResp(w, trackerResp)
@@ -458,25 +468,21 @@ func (a *apiManager) apiPutHeartbeat(w http.ResponseWriter, r *http.Request) {
 }
 
 func (a *apiManager) writeConfigStatusResp(w http.ResponseWriter, tr *trackerResponse) {
-	w.Header().Add("Content-type", tr.contentType)
-	_, err := w.Write(tr.body)
-	if err != nil {
-		log.Errorf("failed to write response: %v", err)
-		a.writeError(w, http.StatusInternalServerError, API_ERR_INTERNAL, err.Error())
-	}
+	a.writeSimpleResp(w, tr)
 }
 
 func (a *apiManager) writePutRegisterResp(w http.ResponseWriter, tr *trackerResponse) {
-	w.Header().Add("Content-type", tr.contentType)
-	_, err := w.Write(tr.body)
-	if err != nil {
-		log.Errorf("failed to write response: %v", err)
-		a.writeError(w, http.StatusInternalServerError, API_ERR_INTERNAL, err.Error())
-	}
+	a.writeSimpleResp(w, tr)
 }
 
 func (a *apiManager) writePutHeartbeatResp(w http.ResponseWriter, tr *trackerResponse) {
-	w.Header().Add("Content-type", tr.contentType)
+	a.writeSimpleResp(w, tr)
+}
+
+func (a *apiManager) writeSimpleResp(w http.ResponseWriter, tr *trackerResponse) {
+	if tr.contentType != "" {
+		w.Header().Add("Content-type", tr.contentType)
+	}
 	_, err := w.Write(tr.body)
 	if err != nil {
 		log.Errorf("failed to write response: %v", err)
