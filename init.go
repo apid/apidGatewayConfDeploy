@@ -129,11 +129,6 @@ func initPlugin(s apid.Services) (apid.PluginData, error) {
 	}
 	apidClusterId = config.GetString(configApidClusterID)
 
-	// initialize token handler
-
-	tokenHandler := &tokenEventHandler{}
-	tokenHandler.initListener(services)
-
 	// initialize tracker client
 
 	client := &trackerClient{
@@ -145,11 +140,10 @@ func initPlugin(s apid.Services) (apid.PluginData, error) {
 			},
 			Timeout: httpTimeout,
 			CheckRedirect: func(req *http.Request, _ []*http.Request) error {
-				req.Header.Set("Authorization", tokenHandler.getBearerToken())
+				req.Header.Set("Authorization", getBearerToken())
 				return nil
 			},
 		},
-		handler: tokenHandler,
 	}
 
 	// initialize db manager
