@@ -130,7 +130,7 @@ func (a *apiManager) InitAPI() {
 	services.API().HandleFunc(a.blobEndpoint, a.apiReturnBlobData).Methods("GET")
 	services.API().HandleFunc(a.configStatusEndpoint, a.apiPutConfigStatus).Methods("PUT")
 	services.API().HandleFunc(a.heartbeatEndpoint, a.apiPutHeartbeat).Methods("PUT")
-	services.API().HandleFunc(a.registerEndpoint, a.apiPutRegister).Methods("POST")
+	services.API().HandleFunc(a.registerEndpoint, a.apiPutRegister).Methods("PUT")
 	a.apiInitialized = true
 	log.Debug("API endpoints initialized")
 }
@@ -445,7 +445,7 @@ func (a *apiManager) apiPutHeartbeat(w http.ResponseWriter, r *http.Request) {
 	vars := mux.Vars(r)
 	uuid := vars["uuid"]
 	if !isValidUuid(uuid) {
-		a.writeError(w, http.StatusBadRequest, API_ERR_INVALID_PARAMETERS, "Bad/Missing gateway uuid")
+		a.writeError(w, http.StatusBadRequest, API_ERR_INVALID_PARAMETERS, "Bad/Missing gateway UUID")
 		return
 	}
 	reported := r.Header.Get("reportedTime")
@@ -462,7 +462,7 @@ func (a *apiManager) apiPutHeartbeat(w http.ResponseWriter, r *http.Request) {
 	case http.StatusOK:
 		a.writePutHeartbeatResp(w, trackerResp)
 	default:
-		log.Infof("apiPutHeartbeat code: %v Reason: %v", trackerResp.code, trackerResp.body)
+		log.Infof("apiPutHeartbeat code: %v Reason: %v", trackerResp.code, string(trackerResp.body))
 		a.writeError(w, trackerResp.code, API_ERR_FROM_TRACKER, string(trackerResp.body))
 	}
 }
@@ -540,10 +540,7 @@ func getHttpHost() string {
 }
 
 func isValidUuid(uuid string) bool {
-	r, err := regexp.Compile("^[a-fA-F0-9]{8}-[a-fA-F0-9]{4}-4[a-fA-F0-9]{3}-[8|9|aA|bB][a-fA-F0-9]{3}-[a-fA-F0-9]{12}$")
-	if err != nil {
-		return false
-	}
+	r := regexp.MustCompile("^[a-fA-F0-9]{8}-[a-fA-F0-9]{4}-4[a-fA-F0-9]{3}-[8|9|aA|bB][a-fA-F0-9]{3}-[a-fA-F0-9]{12}$")
 	return r.MatchString(uuid)
 }
 
@@ -575,7 +572,7 @@ func (body *registerBody) validateBody(uuid string) (bool, string) {
 	case !isValidUuid(body.Uuid):
 		return false, "Bad/Missing gateway UUID"
 	case body.ReportedTime == "" || !isIso8601(body.ReportedTime):
-		return false, "Bad/Missing gateway ReportedTimeService"
+		return false, "Bad/Missing gateway reportedTime"
 	}
 	return true, ""
 }
@@ -598,7 +595,7 @@ func (body *configStatusBody) validateBody() (bool, string) {
 	case !isValidUuid(body.ServiceId):
 		return false, "Bad/Missing gateway ServiceId"
 	case body.ReportedTime == "":
-		return false, "Bad/Missing gateway ReportedTimeService"
+		return false, "Bad/Missing gateway reportedTime"
 	}
 
 	for _, s := range body.StatusDetails {
