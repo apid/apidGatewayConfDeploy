@@ -376,8 +376,8 @@ func (a *apiManager) apiPutRegister(w http.ResponseWriter, r *http.Request) {
 	reqBody := &registerBody{}
 	err = json.Unmarshal(bodyBytes, reqBody)
 	if err != nil {
-		log.Errorf("apiPutRegister error: %v", err)
-		a.writeError(w, http.StatusInternalServerError, API_ERR_INTERNAL, "Failed to read request body.")
+		log.Debugf("apiPutRegister error: %v", err)
+		a.writeError(w, http.StatusBadRequest, API_ERR_INVALID_PARAMETERS, "Failed to read request body json: "+err.Error())
 		return
 	}
 
@@ -416,8 +416,8 @@ func (a *apiManager) apiPutConfigStatus(w http.ResponseWriter, r *http.Request) 
 	reqBody := &configStatusBody{}
 	err = json.Unmarshal(bodyBytes, reqBody)
 	if err != nil {
-		log.Errorf("apiPutConfigStatus error: %v", err)
-		a.writeError(w, http.StatusInternalServerError, API_ERR_INTERNAL, "Failed to read request body.")
+		log.Debugf("apiPutConfigStatus error: %v", err)
+		a.writeError(w, http.StatusBadRequest, API_ERR_INVALID_PARAMETERS, "Failed to read request body json: "+err.Error())
 		return
 	}
 

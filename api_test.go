@@ -278,7 +278,7 @@ var _ = Describe("api", func() {
 		})
 	})
 
-	FContext("Tracking endpoints", func() {
+	Context("Tracking endpoints", func() {
 		var dummyClient *dummyTrackerClient
 		var testClient *http.Client
 
@@ -512,6 +512,49 @@ var _ = Describe("api", func() {
 					})
 					Expect(err).Should(Succeed())
 					req, err := http.NewRequest("PUT", uri.String(), bytes.NewReader(reqBody))
+					Expect(err).Should(Succeed())
+					// http put
+					res, err := testClient.Do(req)
+					Expect(err).Should(Succeed())
+					// parse response
+					defer res.Body.Close()
+					Expect(res.StatusCode).Should(Equal(expectedCode[i]))
+					body, err := ioutil.ReadAll(res.Body)
+					Expect(err).Should(Succeed())
+					Expect(strings.Contains(strings.ToLower(string(body)), strings.ToLower(expectedBody[i]))).To(BeTrue())
+				}
+			})
+
+			It("/configurations/status should reject invalid json, and marshal valid fields", func() {
+				// setup test data
+				dummyClient.code = http.StatusOK
+				testData := []string{
+					"invalid-json",
+					`{"serviceId":"8eebdb60-be68-4380-a902-8cd0a2a0744c",
+					"reportedTime":"2017-08-09T13:30:03.987-07:00"}`,
+					`{"invalid-field1":"8eebdb60-be68-4380-a902-8cd0a2a0744c",
+					"invalid-field2":"2017-08-09T13:30:03.987-07:00"}`,
+				}
+
+				expectedCode := []int{
+					http.StatusBadRequest,
+					http.StatusOK,
+					http.StatusBadRequest,
+				}
+
+				expectedBody := []string{
+					"json",
+					"",
+					"",
+				}
+
+				// setup http client
+				uri, err := url.Parse(apiTestUrl)
+				Expect(err).Should(Succeed())
+				for i, data := range testData {
+					uri.Path = testApiMan.configStatusEndpoint
+					log.Debug(uri.String(), data)
+					req, err := http.NewRequest("PUT", uri.String(), strings.NewReader(data))
 					Expect(err).Should(Succeed())
 					// http put
 					res, err := testClient.Do(req)
@@ -804,7 +847,6 @@ func GenerateUUID() string {
 }
 
 func generateStatusDetails(flag int) (*statusDetailsJson, string) {
-	log.Warnf("flag: %v", flag)
 	id := GenerateUUID()
 	var ret *statusDetailsJson
 	var expected string
