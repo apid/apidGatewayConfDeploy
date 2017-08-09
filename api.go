@@ -395,7 +395,7 @@ func (a *apiManager) apiPutRegister(w http.ResponseWriter, r *http.Request) {
 	case http.StatusOK:
 		a.writePutRegisterResp(w, trackerResp)
 	default:
-		log.Infof("apiPutRegister code: %v Reason: %v", trackerResp.code, trackerResp.body)
+		log.Debugf("apiPutRegister code: %v Reason: %v", trackerResp.code, string(trackerResp.body))
 		a.writeError(w, trackerResp.code, API_ERR_FROM_TRACKER, string(trackerResp.body))
 	}
 
@@ -435,7 +435,7 @@ func (a *apiManager) apiPutConfigStatus(w http.ResponseWriter, r *http.Request) 
 	case http.StatusOK:
 		a.writeConfigStatusResp(w, trackerResp)
 	default:
-		log.Infof("apiPutConfigStatus code: %v Reason: %v", trackerResp.code, trackerResp.body)
+		log.Infof("apiPutConfigStatus code: %v Reason: %v", trackerResp.code, string(trackerResp.body))
 		a.writeError(w, trackerResp.code, API_ERR_FROM_TRACKER, string(trackerResp.body))
 	}
 }
@@ -583,6 +583,23 @@ type configStatusBody struct {
 	ReportedTime  string              `json:"reportedTime"`
 }
 
+func (body *configStatusBody) validateBody() (bool, string) {
+	switch {
+	case !isValidUuid(body.ServiceId):
+		return false, "Bad/Missing gateway ServiceId"
+	case body.ReportedTime == "" || !isIso8601(body.ReportedTime):
+		return false, "Bad/Missing gateway reportedTime"
+	}
+
+	for _, s := range body.StatusDetails {
+		isValid, reason := s.validateBody()
+		if !isValid {
+			return false, reason
+		}
+	}
+	return true, ""
+}
+
 type statusDetailsJson struct {
 	Status          string `json:"status"`
 	ConfigurationId string `json:"configurationId"`
@@ -590,21 +607,12 @@ type statusDetailsJson struct {
 	Message         string `json:"message"`
 }
 
-func (body *configStatusBody) validateBody() (bool, string) {
+func (s *statusDetailsJson) validateBody() (bool, string) {
 	switch {
-	case !isValidUuid(body.ServiceId):
-		return false, "Bad/Missing gateway ServiceId"
-	case body.ReportedTime == "":
-		return false, "Bad/Missing gateway reportedTime"
-	}
-
-	for _, s := range body.StatusDetails {
-		switch {
-		case s.Status == "":
-			return false, "Bad/Missing configuration Status"
-		case s.ConfigurationId == "":
-			return false, "Bad/Missing configuration ConfigurationId"
-		}
+	case s.Status == "":
+		return false, "Bad/Missing configuration Status"
+	case s.ConfigurationId == "":
+		return false, "Bad/Missing configuration ConfigurationId"
 	}
 	return true, ""
 }
