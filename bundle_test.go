@@ -15,15 +15,8 @@
 package apiGatewayConfDeploy
 
 import (
-	"net/http"
-
-	"bytes"
-	"encoding/json"
-	"github.com/gorilla/mux"
 	. "github.com/onsi/ginkgo"
 	. "github.com/onsi/gomega"
-	"io"
-	"strings"
 	"sync/atomic"
 	"time"
 )
@@ -136,71 +129,3 @@ var _ = Describe("api", func() {
 		Expect(req.markFailedAt.IsZero()).Should(BeTrue())
 	}, 4)
 })
-
-type dummyApiManager struct {
-	initCalled bool
-}
-
-func (a *dummyApiManager) InitAPI() {
-	a.initCalled = true
-}
-
-type dummyBlobServer struct {
-	serverEndpoint string
-	signedEndpoint string
-	signedTimeout  *int32
-	blobTimeout    *int32
-	resetTimeout   bool
-}
-
-func (b *dummyBlobServer) start() {
-	services.API().HandleFunc(b.serverEndpoint, b.returnSigned).Methods("GET")
-	services.API().HandleFunc(b.signedEndpoint, b.returnBlob).Methods("GET")
-}
-
-// send a dummy uri as response
-func (b *dummyBlobServer) returnSigned(w http.ResponseWriter, r *http.Request) {
-	defer GinkgoRecover()
-	if atomic.LoadInt32(b.signedTimeout) == int32(1) {
-		if b.resetTimeout {
-			atomic.StoreInt32(b.signedTimeout, 0)
-		}
-		time.Sleep(time.Second)
-	}
-	vars := mux.Vars(r)
-	blobId := vars["blobId"]
-
-	uriString := strings.Replace(bundleTestUrl+b.signedEndpoint, "{blobId}", blobId, 1)
-	log.Debug("dummyBlobServer returnSigned: " + uriString)
-
-	res := blobServerResponse{
-		Id:                       blobId,
-		Kind:                     "Blob",
-		Self:                     r.RequestURI,
-		SignedUrl:                uriString,
-		SignedUrlExpiryTimestamp: time.Now().Add(3 * time.Hour).Format(time.RFC3339),
-	}
-
-	resBytes, err := json.Marshal(res)
-	Expect(err).Should(Succeed())
-	_, err = io.Copy(w, bytes.NewReader(resBytes))
-	Expect(err).Should(Succeed())
-	w.Header().Set("Content-Type", headerSteam)
-}
-
-// send blobId back as response
-func (b *dummyBlobServer) returnBlob(w http.ResponseWriter, r *http.Request) {
-	defer GinkgoRecover()
-	if atomic.LoadInt32(b.blobTimeout) == int32(1) {
-		if b.resetTimeout {
-			atomic.StoreInt32(b.blobTimeout, 0)
-		}
-		time.Sleep(time.Second)
-	}
-	vars := mux.Vars(r)
-	blobId := vars["blobId"]
-	log.Debug("dummyBlobServer returnBlob id=" + blobId)
-	_, err := io.Copy(w, bytes.NewReader([]byte(blobId)))
-	Expect(err).Should(Succeed())
-	w.Header().Set("Content-Type", headerSteam)
-}

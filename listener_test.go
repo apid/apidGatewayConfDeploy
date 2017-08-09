@@ -277,45 +277,6 @@ var _ = Describe("listener", func() {
 	})
 })
 
-type dummyBundleManager struct {
-	requestChan chan *DownloadRequest
-	depChan     chan *DataDeployment
-	delChan     chan *DataDeployment
-	delBlobChan chan string
-}
-
-func (bm *dummyBundleManager) initializeBundleDownloading() {
-
-}
-
-func (bm *dummyBundleManager) queueDownloadRequest(dep *DataDeployment) {
-	bm.depChan <- dep
-}
-
-func (bm *dummyBundleManager) enqueueRequest(req *DownloadRequest) {
-	bm.requestChan <- req
-}
-
-func (bm *dummyBundleManager) makeDownloadRequest(blobId string) *DownloadRequest {
-	return &DownloadRequest{
-		blobId: blobId,
-	}
-}
-
-func (bm *dummyBundleManager) deleteBundlesFromDeployments(deployments []DataDeployment) {
-	for i := range deployments {
-		bm.delChan <- &deployments[i]
-	}
-}
-
-func (bm *dummyBundleManager) deleteBundleById(blobId string) {
-	bm.delBlobChan <- blobId
-}
-
-func (bm *dummyBundleManager) Close() {
-
-}
-
 func rowFromDeployment(dep *DataDeployment) common.Row {
 	row := common.Row{}
 	row["id"] = &common.ColumnVal{Value: dep.ID}
