@@ -17,6 +17,7 @@ package apiGatewayConfDeploy
 import (
 	. "github.com/onsi/ginkgo"
 	. "github.com/onsi/gomega"
+	"net/http"
 	"sync/atomic"
 	"time"
 )
@@ -65,11 +66,13 @@ var _ = Describe("api", func() {
 			apiMan:                    dummyApiMan,
 			concurrentDownloads:       concurrentDownloads,
 			markDeploymentFailedAfter: 5 * time.Second,
-			bundleDownloadConnTimeout: time.Second,
 			bundleRetryDelay:          time.Second,
 			bundleCleanupDelay:        5 * time.Second,
 			downloadQueue:             make(chan *DownloadRequest, downloadQueueSize),
 			isClosed:                  new(int32),
+			client: &http.Client{
+				Timeout: time.Second,
+			},
 		}
 		testBundleMan.initializeBundleDownloading()
 		time.Sleep(100 * time.Millisecond)
@@ -94,7 +97,7 @@ var _ = Describe("api", func() {
 		// setup timeout
 		atomic.StoreInt32(blobServer.signedTimeout, 1)
 		atomic.StoreInt32(blobServer.blobTimeout, 1)
-		testBundleMan.bundleDownloadConnTimeout = 500 * time.Millisecond
+		testBundleMan.client.Timeout = 500 * time.Millisecond
 		testBundleMan.bundleRetryDelay = 50 * time.Millisecond
 
 		// download blobs
@@ -109,7 +112,7 @@ var _ = Describe("api", func() {
 		// setup timeout
 		atomic.StoreInt32(blobServer.signedTimeout, 1)
 		atomic.StoreInt32(blobServer.blobTimeout, 1)
-		testBundleMan.bundleDownloadConnTimeout = 100 * time.Millisecond
+		testBundleMan.client.Timeout = 100 * time.Millisecond
 		testBundleMan.bundleRetryDelay = 100 * time.Millisecond
 		testBundleMan.markDeploymentFailedAfter = 200 * time.Millisecond
 
