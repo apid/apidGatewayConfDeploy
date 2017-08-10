@@ -145,11 +145,13 @@ func initPlugin(s apid.Services) (apid.PluginData, error) {
 		apiMan:                    apiMan,
 		concurrentDownloads:       concurrentDownloads,
 		markDeploymentFailedAfter: markDeploymentFailedAfter,
-		bundleDownloadConnTimeout: bundleDownloadConnTimeout,
 		bundleRetryDelay:          time.Second,
 		bundleCleanupDelay:        bundleCleanupDelay,
 		downloadQueue:             make(chan *DownloadRequest, downloadQueueSize),
 		isClosed:                  new(int32),
+		client: &http.Client{
+			Timeout: bundleDownloadConnTimeout,
+		},
 	}
 
 	bundleMan.initializeBundleDownloading()
