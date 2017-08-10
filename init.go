@@ -43,7 +43,6 @@ const (
 	configStoragePath                = "local_storage_path"
 	maxIdleConnsPerHost              = 50
 	httpTimeout                      = time.Minute
-	configBearerToken                = "apigeesync_bearer_token"
 )
 
 var (
@@ -193,6 +192,7 @@ func initPlugin(s apid.Services) (apid.PluginData, error) {
 		downloadQueue:             make(chan *DownloadRequest, downloadQueueSize),
 		isClosed:                  new(int32),
 		client:                    httpClient,
+
 	}
 
 	bundleMan.initializeBundleDownloading()
@@ -215,6 +215,3 @@ func initPlugin(s apid.Services) (apid.PluginData, error) {
 	return pluginData, nil
 }
 
-func getBearerToken() string {
-	return "Bearer " + config.GetString(configBearerToken)
-}

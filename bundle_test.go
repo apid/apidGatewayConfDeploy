@@ -17,6 +17,7 @@ package apiGatewayConfDeploy
 import (
 	. "github.com/onsi/ginkgo"
 	. "github.com/onsi/gomega"
+	"net/http"
 	"sync/atomic"
 	"time"
 )
