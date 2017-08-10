@@ -40,6 +40,7 @@ const (
 	configConcurrentDownloads        = "apigeesync_concurrent_downloads"
 	configDownloadQueueSize          = "apigeesync_download_queue_size"
 	configBlobServerBaseURI          = "apigeesync_blob_server_base"
+	configTrackerServerBaseURI       = "gatewaydeploy_tracker_server_base"
 	configStoragePath                = "local_storage_path"
 	maxIdleConnsPerHost              = 10
 	httpTimeout                      = time.Minute
@@ -120,7 +121,7 @@ func initPlugin(s apid.Services) (apid.PluginData, error) {
 	// initialize tracker client
 
 	client := &trackerClient{
-		trackerBaseUrl: configApiServerBaseURI,
+		trackerBaseUrl: config.GetString(configTrackerServerBaseURI),
 		clusterId:      apidClusterId,
 		httpclient: &http.Client{
 			Transport: &http.Transport{
