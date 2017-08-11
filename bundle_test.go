@@ -72,6 +72,9 @@ var _ = Describe("api", func() {
 			isClosed:                  new(int32),
 			client: &http.Client{
 				Timeout: time.Second,
+				Transport: &http.Transport{
+					MaxIdleConnsPerHost: 10,
+				},
 			},
 		}
 		testBundleMan.initializeBundleDownloading()
