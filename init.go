@@ -41,7 +41,7 @@ const (
 	configDownloadQueueSize          = "apigeesync_download_queue_size"
 	configBlobServerBaseURI          = "apigeesync_blob_server_base"
 	configStoragePath                = "local_storage_path"
-	maxIdleConnsPerHost              = 10
+	maxIdleConnsPerHost              = 50
 	httpTimeout                      = time.Minute
 )
 
@@ -118,20 +118,21 @@ func initPlugin(s apid.Services) (apid.PluginData, error) {
 	apidClusterId = config.GetString(configApidClusterID)
 
 	// initialize tracker client
+	httpClient := &http.Client{
+		Transport: &http.Transport{
+			MaxIdleConnsPerHost: maxIdleConnsPerHost,
+		},
+		Timeout: httpTimeout,
+		CheckRedirect: func(req *http.Request, _ []*http.Request) error {
+			req.Header.Set("Authorization", getBearerToken())
+			return nil
+		},
+	}
 
 	client := &trackerClient{
 		trackerBaseUrl: configApiServerBaseURI,
 		clusterId:      apidClusterId,
-		httpclient: &http.Client{
-			Transport: &http.Transport{
-				MaxIdleConnsPerHost: maxIdleConnsPerHost,
-			},
-			Timeout: httpTimeout,
-			CheckRedirect: func(req *http.Request, _ []*http.Request) error {
-				req.Header.Set("Authorization", getBearerToken())
-				return nil
-			},
-		},
+		httpclient:     httpClient,
 	}
 
 	// initialize db manager
@@ -180,9 +181,7 @@ func initPlugin(s apid.Services) (apid.PluginData, error) {
 		bundleCleanupDelay:        bundleCleanupDelay,
 		downloadQueue:             make(chan *DownloadRequest, downloadQueueSize),
 		isClosed:                  new(int32),
-		client: &http.Client{
-			Timeout: bundleDownloadConnTimeout,
-		},
+		client:                    httpClient,
 	}
 
 	bundleMan.initializeBundleDownloading()
