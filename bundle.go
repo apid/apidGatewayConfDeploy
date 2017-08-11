@@ -48,12 +48,12 @@ type bundleManager struct {
 	apiMan                    apiManagerInterface
 	concurrentDownloads       int
 	markDeploymentFailedAfter time.Duration
-	bundleDownloadConnTimeout time.Duration
 	bundleRetryDelay          time.Duration
 	bundleCleanupDelay        time.Duration
 	downloadQueue             chan *DownloadRequest
 	isClosed                  *int32
 	workers                   []*BundleDownloader
+	client                    *http.Client
 }
 
 type blobServerResponse struct {
@@ -103,7 +103,7 @@ func (bm *bundleManager) makeDownloadRequest(id string) *DownloadRequest {
 		blobId:        id,
 		backoffFunc:   createBackoff(retryIn, maxBackOff),
 		markFailedAt:  markFailedAt,
-		connTimeout:   bm.bundleDownloadConnTimeout,
+		client:        bm.client,
 	}
 }
 
@@ -158,8 +158,8 @@ type DownloadRequest struct {
 	blobId        string
 	backoffFunc   func()
 	markFailedAt  time.Time
-	connTimeout   time.Duration
 	blobServerURL string
+	client        *http.Client
 }
 
 func (r *DownloadRequest) downloadBundle() error {
@@ -172,7 +172,7 @@ func (r *DownloadRequest) downloadBundle() error {
 		}
 	}
 
-	downloadedFile, err := downloadFromURI(r.blobServerURL, r.blobId, r.connTimeout)
+	downloadedFile, err := downloadFromURI(r.client, r.blobServerURL, r.blobId)
 
 	if err != nil {
 		log.Errorf("Unable to download blob file blobId=%s err:%v", r.blobId, err)
@@ -210,7 +210,7 @@ func getBlobFilePath(blobId string) string {
 	return path.Join(bundlePath, base64.StdEncoding.EncodeToString([]byte(blobId)))
 }
 
-func getSignedURL(blobServerURL string, blobId string, bundleDownloadConnTimeout time.Duration) (string, error) {
+func getSignedURL(client *http.Client, blobServerURL string, blobId string) (string, error) {
 
 	blobUri, err := url.Parse(blobServerURL)
 	if err != nil {
@@ -224,7 +224,7 @@ func getSignedURL(blobServerURL string, blobId string, bundleDownloadConnTimeout
 
 	uri := blobUri.String()
 
-	surl, err := getURIReader(uri, bundleDownloadConnTimeout)
+	surl, err := getUriReaderWithAuth(client, uri)
 	if err != nil {
 		log.Errorf("Unable to get signed URL from BlobServer %s: %v", uri, err)
 		return "", err
@@ -248,12 +248,12 @@ func getSignedURL(blobServerURL string, blobId string, bundleDownloadConnTimeout
 
 // downloadFromURI involves retrieving the signed URL for the blob, and storing the resource locally
 // after downloading the resource from GCS (via the signed URL)
-func downloadFromURI(blobServerURL string, blobId string, bundleDownloadConnTimeout time.Duration) (tempFileName string, err error) {
+func downloadFromURI(client *http.Client, blobServerURL string, blobId string) (tempFileName string, err error) {
 
 	var tempFile *os.File
 	log.Debugf("Downloading bundle: %s", blobId)
 
-	uri, err := getSignedURL(blobServerURL, blobId, bundleDownloadConnTimeout)
+	uri, err := getSignedURL(client, blobServerURL, blobId)
 	if err != nil {
 		log.Errorf("Unable to get signed URL for blobId {%s}, error : {%v}", blobId, err)
 		return
@@ -268,7 +268,7 @@ func downloadFromURI(blobServerURL string, blobId string, bundleDownloadConnTime
 	tempFileName = tempFile.Name()
 
 	var confReader io.ReadCloser
-	confReader, err = getURIReader(uri, bundleDownloadConnTimeout)
+	confReader, err = getUriReaderWithAuth(client, uri)
 	if err != nil {
 		log.Errorf("Unable to retrieve bundle %s: %v", uri, err)
 		return
@@ -286,12 +286,14 @@ func downloadFromURI(blobServerURL string, blobId string, bundleDownloadConnTime
 }
 
 // retrieveBundle retrieves bundle data from a URI
-func getURIReader(uriString string, bundleDownloadConnTimeout time.Duration) (io.ReadCloser, error) {
-
-	client := http.Client{
-		Timeout: bundleDownloadConnTimeout,
+func getUriReaderWithAuth(client *http.Client, uriString string) (io.ReadCloser, error) {
+	req, err := http.NewRequest("GET", uriString, nil)
+	if err != nil {
+		return nil, err
 	}
-	res, err := client.Get(uriString)
+	// add Auth
+	req.Header.Add("Authorization", getBearerToken())
+	res, err := client.Do(req)
 	if err != nil {
 		return nil, err
 	}

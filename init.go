@@ -21,6 +21,7 @@ import (
 	"time"
 
 	"github.com/30x/apid-core"
+	"net/http"
 	"sync"
 )
 
@@ -40,6 +41,9 @@ const (
 	configDownloadQueueSize          = "apigeesync_download_queue_size"
 	configBlobServerBaseURI          = "apigeesync_blob_server_base"
 	configStoragePath                = "local_storage_path"
+	maxIdleConnsPerHost              = 50
+	httpTimeout                      = time.Minute
+	configBearerToken                = "apigeesync_bearer_token"
 )
 
 var (
@@ -107,6 +111,18 @@ func initPlugin(s apid.Services) (apid.PluginData, error) {
 
 	log.Debug("apiServerBaseURI = " + apiServerBaseURI.String())
 
+	// initialize tracker client
+	httpClient := &http.Client{
+		Transport: &http.Transport{
+			MaxIdleConnsPerHost: maxIdleConnsPerHost,
+		},
+		Timeout: httpTimeout,
+		CheckRedirect: func(req *http.Request, _ []*http.Request) error {
+			req.Header.Set("Authorization", getBearerToken())
+			return nil
+		},
+	}
+
 	// initialize db manager
 
 	dbMan := &dbManager{
@@ -145,11 +161,11 @@ func initPlugin(s apid.Services) (apid.PluginData, error) {
 		apiMan:                    apiMan,
 		concurrentDownloads:       concurrentDownloads,
 		markDeploymentFailedAfter: markDeploymentFailedAfter,
-		bundleDownloadConnTimeout: bundleDownloadConnTimeout,
 		bundleRetryDelay:          time.Second,
 		bundleCleanupDelay:        bundleCleanupDelay,
 		downloadQueue:             make(chan *DownloadRequest, downloadQueueSize),
 		isClosed:                  new(int32),
+		client:                    httpClient,
 	}
 
 	bundleMan.initializeBundleDownloading()
@@ -170,4 +186,8 @@ func initPlugin(s apid.Services) (apid.PluginData, error) {
 	log.Debug("end init")
 
 	return pluginData, nil
+}
+
+func getBearerToken() string {
+	return "Bearer " + config.GetString(configBearerToken)
 }
