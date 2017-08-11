@@ -127,22 +127,12 @@ func initPlugin(s apid.Services) (apid.PluginData, error) {
 		},
 	}
 	apidClusterId = config.GetString(configApidClusterID)
-
-	// initialize tracker client
+	
 
 	client := &trackerClient{
 		trackerBaseUrl: configApiServerBaseURI,
 		clusterId:      apidClusterId,
-		httpclient: &http.Client{
-			Transport: &http.Transport{
-				MaxIdleConnsPerHost: maxIdleConnsPerHost,
-			},
-			Timeout: httpTimeout,
-			CheckRedirect: func(req *http.Request, _ []*http.Request) error {
-				req.Header.Set("Authorization", getBearerToken())
-				return nil
-			},
-		},
+		httpclient:     httpClient,
 	}
 
 	// initialize db manager
@@ -192,7 +182,6 @@ func initPlugin(s apid.Services) (apid.PluginData, error) {
 		downloadQueue:             make(chan *DownloadRequest, downloadQueueSize),
 		isClosed:                  new(int32),
 		client:                    httpClient,
-
 	}
 
 	bundleMan.initializeBundleDownloading()
