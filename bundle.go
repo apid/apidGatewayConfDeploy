@@ -321,10 +321,10 @@ func (w *BundleDownloader) Start() {
 				if _, ok := err.(*timeoutError); ok {
 					continue
 				}
-				go func() {
-					req.backoffFunc()
-					w.bm.enqueueRequest(req)
-				}()
+				go func(r *DownloadRequest, bm *bundleManager) {
+					r.backoffFunc()
+					bm.enqueueRequest(r)
+				}(req, w.bm)
 			}
 		}
 		log.Debugf("bundle downloader %d stopped", w.id)
