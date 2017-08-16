@@ -128,7 +128,6 @@ func initPlugin(s apid.Services) (apid.PluginData, error) {
 	}
 	apidClusterId = config.GetString(configApidClusterID)
 
-
 	client := &trackerClient{
 		trackerBaseUrl: configApiServerBaseURI,
 		clusterId:      apidClusterId,
@@ -203,4 +202,3 @@ func initPlugin(s apid.Services) (apid.PluginData, error) {
 
 	return pluginData, nil
 }
-

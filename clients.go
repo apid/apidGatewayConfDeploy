@@ -45,6 +45,7 @@ func (t *trackerClient) putConfigStatus(reqBody *configStatusBody) *trackerRespo
 
 	req, err := http.NewRequest("PUT", uri.String(), bytes.NewReader(bodyBytes))
 	req.Header.Add("Authorization", getBearerToken())
+	req.Header.Set("X-Apigee-Consumer-Type", "apid")
 
 	r, err := t.httpclient.Do(req)
 	if err != nil {
@@ -79,6 +80,7 @@ func (t *trackerClient) putRegister(uuid string, reqBody *registerBody) *tracker
 
 	req, err := http.NewRequest("PUT", uri.String(), bytes.NewReader(bodyBytes))
 	req.Header.Add("Authorization", getBearerToken())
+	req.Header.Set("X-Apigee-Consumer-Type", "apid")
 
 	r, err := t.httpclient.Do(req)
 	if err != nil {
@@ -98,6 +100,7 @@ func (t *trackerClient) putHeartbeat(uuid, reported string) *trackerResponse {
 	req, err := http.NewRequest("PUT", uri.String(), nil)
 	req.Header.Add("Authorization", getBearerToken())
 	req.Header.Add("reportedTime", reported)
+	req.Header.Set("X-Apigee-Consumer-Type", "apid")
 
 	r, err := t.httpclient.Do(req)
 	if err != nil {
