@@ -298,6 +298,7 @@ func getUriReaderWithAuth(client *http.Client, uriString string) (io.ReadCloser,
 		return nil, err
 	}
 	if res.StatusCode != 200 {
+		res.Body.Close()
 		return nil, fmt.Errorf("GET uri %s failed with status %d", uriString, res.StatusCode)
 	}
 	return res.Body, nil

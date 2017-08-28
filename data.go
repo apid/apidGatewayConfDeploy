@@ -116,7 +116,10 @@ func (dbc *dbManager) getUnreadyBlobs() (ids []string, err error) {
 	defer rows.Close()
 	for rows.Next() {
 		var id string
-		rows.Scan(&id)
+		err = rows.Scan(&id)
+		if err != nil {
+			return
+		}
 		ids = append(ids, id)
 	}
 
