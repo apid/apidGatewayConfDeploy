@@ -15,9 +15,9 @@
 package: github.com/30x/apidGatewayConfDeploy
 import:
 - package: github.com/30x/apid-core
-  version: master
+  version: Release_170815-EdgeX-EAP
 - package: github.com/apigee-labs/transicator/common
-  version: master
+  version: Release_170815-EdgeX-EAP
 - package: github.com/gorilla/mux
   version: master
 testImport:
