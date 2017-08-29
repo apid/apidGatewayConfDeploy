@@ -190,19 +190,21 @@ func (dbc *dbManager) getReadyDeployments() ([]DataDeployment, error) {
 }
 
 func (dbc *dbManager) updateLocalFsLocation(blobId, localFsLocation string) error {
-
-	stmt, err := dbc.getDb().Prepare(`
+	txn, err := dbc.getDb().Begin()
+	if err != nil {
+		return err
+	}
+	defer txn.Rollback()
+	_, err = txn.Exec(`
 		INSERT OR IGNORE INTO apid_blob_available (
 		id,
 		local_fs_location
-		) VALUES (?, ?);`)
+		) VALUES (?, ?);`, blobId, localFsLocation)
 	if err != nil {
-		log.Errorf("PREPARE updateLocalFsLocation failed: %v", err)
+		log.Errorf("INSERT apid_blob_available id {%s} local_fs_location {%s} failed", localFsLocation, err)
 		return err
 	}
-	defer stmt.Close()
-
-	_, err = stmt.Exec(blobId, localFsLocation)
+	err = txn.Commit()
 	if err != nil {
 		log.Errorf("UPDATE apid_blob_available id {%s} local_fs_location {%s} failed", localFsLocation, err)
 		return err
