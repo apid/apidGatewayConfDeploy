@@ -172,12 +172,18 @@ func (r *DownloadRequest) downloadBundle() error {
 		}
 	}
 
+	cleanTempFile := func(file string) {
+		if os.Remove(file) != nil {
+			log.Warnf("Unable to remove temp file %s", file)
+		}
+	}
+
 	downloadedFile, err := downloadFromURI(r.client, r.blobServerURL, r.blobId)
 
 	if err != nil {
 		log.Errorf("Unable to download blob file blobId=%s err:%v", r.blobId, err)
-		if downloadedFile != "" && os.Remove(downloadedFile) != nil {
-			log.Debugf("Unable to remove temp file %s", downloadedFile)
+		if downloadedFile != "" {
+			go cleanTempFile(downloadedFile)
 		}
 		return err
 	}
@@ -187,8 +193,8 @@ func (r *DownloadRequest) downloadBundle() error {
 	err = r.bm.dbMan.updateLocalFsLocation(r.blobId, downloadedFile)
 	if err != nil {
 		log.Errorf("updateLocalFsLocation failed: blobId=%s", r.blobId)
-		if downloadedFile != "" && os.Remove(downloadedFile) != nil {
-			log.Debugf("Unable to remove temp file %s", downloadedFile)
+		if downloadedFile != "" {
+			go cleanTempFile(downloadedFile)
 		}
 		return err
 	}
