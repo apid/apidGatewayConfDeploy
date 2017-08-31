@@ -77,7 +77,12 @@ func (dbc *dbManager) getDb() apid.DB {
 }
 
 func (dbc *dbManager) initDb() error {
-	_, err := dbc.getDb().Exec(`
+	tx, err := dbc.getDb().Begin()
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	_, err = tx.Exec(`
 	CREATE TABLE IF NOT EXISTS apid_blob_available (
 		id text primary key,
    		local_fs_location text NOT NULL
@@ -86,7 +91,10 @@ func (dbc *dbManager) initDb() error {
 	if err != nil {
 		return err
 	}
-
+	err = tx.Commit()
+	if err != nil {
+		return err
+	}
 	log.Debug("Database table apid_blob_available created.")
 	return nil
 }
