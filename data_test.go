@@ -162,7 +162,10 @@ var _ = Describe("data", func() {
 
 //initialize DB for tests
 func initTestDb(db apid.DB) {
-	_, err := db.Exec(`
+	tx, err := db.Begin()
+	Expect(err).Should(Succeed())
+	defer tx.Rollback()
+	_, err = tx.Exec(`
 		CREATE TABLE metadata_runtime_entity_metadata (
 		id text,
 		organization_id text,
@@ -183,7 +186,7 @@ func initTestDb(db apid.DB) {
 	Expect(err).Should(Succeed())
 
 	// ready blob, empty resource
-	_, err = db.Exec(`
+	_, err = tx.Exec(`
 		INSERT INTO "metadata_runtime_entity_metadata" VALUES(
 		'1dc4895e-6494-4b59-979f-5f4c89c073b4',
 		'73fcac6c-5d9f-44c1-8db0-333efda3e6e8',
@@ -204,7 +207,7 @@ func initTestDb(db apid.DB) {
 	Expect(err).Should(Succeed())
 
 	// ready blob, ready resource
-	_, err = db.Exec(`
+	_, err = tx.Exec(`
 		INSERT INTO "metadata_runtime_entity_metadata" VALUES(
 		'319963ff-217e-4ecc-8d6e-c3665e962d1e',
 		'73fcac6c-5d9f-44c1-8db0-333efda3e6e8',
@@ -225,7 +228,7 @@ func initTestDb(db apid.DB) {
 	Expect(err).Should(Succeed())
 
 	// ready blob, unready resource
-	_, err = db.Exec(`
+	_, err = tx.Exec(`
 		INSERT INTO "metadata_runtime_entity_metadata" VALUES(
 		'3af44bb7-0a74-4283-860c-3561e6c19132',
 		'73fcac6c-5d9f-44c1-8db0-333efda3e6e8',
@@ -246,7 +249,7 @@ func initTestDb(db apid.DB) {
 	Expect(err).Should(Succeed())
 
 	// unready blob, empty resource
-	_, err = db.Exec(`
+	_, err = tx.Exec(`
 		INSERT INTO "metadata_runtime_entity_metadata" VALUES(
 		'd5ffd9db-4795-43eb-b645-d2a0b6c8ac6a',
 		'73fcac6c-5d9f-44c1-8db0-333efda3e6e8',
@@ -267,7 +270,7 @@ func initTestDb(db apid.DB) {
 	Expect(err).Should(Succeed())
 
 	// unready blob, ready resource
-	_, err = db.Exec(`
+	_, err = tx.Exec(`
 		INSERT INTO "metadata_runtime_entity_metadata" VALUES(
 		'84ac8d68-b3d1-4bcc-ad0d-c6a0ed67e16c',
 		'73fcac6c-5d9f-44c1-8db0-333efda3e6e8',
@@ -288,7 +291,7 @@ func initTestDb(db apid.DB) {
 	Expect(err).Should(Succeed())
 
 	// unready blob, unready resource
-	_, err = db.Exec(`
+	_, err = tx.Exec(`
 		INSERT INTO "metadata_runtime_entity_metadata" VALUES(
 		'3ecd351c-1173-40bf-b830-c194e5ef9038',
 		'73fcac6c-5d9f-44c1-8db0-333efda3e6e8',
@@ -307,4 +310,5 @@ func initTestDb(db apid.DB) {
 		);
 	`)
 	Expect(err).Should(Succeed())
+	Expect(tx.Commit()).Should(Succeed())
 }

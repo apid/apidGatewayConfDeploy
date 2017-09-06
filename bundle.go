@@ -172,10 +172,19 @@ func (r *DownloadRequest) downloadBundle() error {
 		}
 	}
 
+	cleanTempFile := func(file string) {
+		if os.Remove(file) != nil {
+			log.Warnf("Unable to remove temp file %s", file)
+		}
+	}
+
 	downloadedFile, err := downloadFromURI(r.client, r.blobServerURL, r.blobId)
 
 	if err != nil {
 		log.Errorf("Unable to download blob file blobId=%s err:%v", r.blobId, err)
+		if downloadedFile != "" {
+			go cleanTempFile(downloadedFile)
+		}
 		return err
 	}
 
@@ -184,10 +193,13 @@ func (r *DownloadRequest) downloadBundle() error {
 	err = r.bm.dbMan.updateLocalFsLocation(r.blobId, downloadedFile)
 	if err != nil {
 		log.Errorf("updateLocalFsLocation failed: blobId=%s", r.blobId)
+		if downloadedFile != "" {
+			go cleanTempFile(downloadedFile)
+		}
 		return err
 	}
 
-	log.Debugf("bundle downloaded: blobId=%s", r.blobId)
+	log.Debugf("bundle downloaded: blobId=%s filename=%s", r.blobId, downloadedFile)
 
 	// TODO send changed deployments to subscribers (API call with "block")
 	//r.bm.apiMan.addChangedDeployment(dep.ID)
