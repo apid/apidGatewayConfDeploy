@@ -12,9 +12,9 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-package: github.com/30x/apidGatewayConfDeploy
+package: github.com/apid/apidGatewayConfDeploy
 import:
-- package: github.com/30x/apid-core
+- package: github.com/apid/apid-core
   version: master
 - package: github.com/apigee-labs/transicator/common
   version: master

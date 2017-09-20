@@ -17,7 +17,7 @@ import (
 	"database/sql"
 	"sync"
 
-	"github.com/30x/apid-core"
+	"github.com/apid/apid-core"
 	"reflect"
 )
 
