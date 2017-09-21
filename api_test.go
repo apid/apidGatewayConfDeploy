@@ -19,13 +19,14 @@ import (
 	"net/http"
 	"net/url"
 
+	"bytes"
 	"crypto/rand"
 	"fmt"
 	. "github.com/onsi/ginkgo"
 	. "github.com/onsi/gomega"
 	mathrand "math/rand"
-	"os"
 	"strconv"
+	"strings"
 	"time"
 )
 
@@ -43,13 +44,16 @@ var _ = Describe("api", func() {
 		testCount += 1
 		dummyDbMan = &dummyDbManager{}
 		testApiMan = &apiManager{
-			dbMan:               dummyDbMan,
-			deploymentsEndpoint: deploymentsEndpoint + strconv.Itoa(testCount),
-			blobEndpoint:        blobEndpointPath + strconv.Itoa(testCount) + "/{blobId}",
-			eTag:                int64(testCount * 10),
-			deploymentsChanged:  make(chan interface{}, 5),
-			addSubscriber:       make(chan chan deploymentsResult),
-			removeSubscriber:    make(chan chan deploymentsResult),
+			dbMan:                dummyDbMan,
+			deploymentsEndpoint:  deploymentsEndpoint + strconv.Itoa(testCount),
+			blobEndpoint:         blobEndpointPath + strconv.Itoa(testCount) + "/{blobId}",
+			configStatusEndpoint: "/test" + strconv.Itoa(testCount) + configStatusEndpoint,
+			heartbeatEndpoint:    "/test" + strconv.Itoa(testCount) + heartbeatEndpoint,
+			registerEndpoint:     "/test" + strconv.Itoa(testCount) + registerEndpoint,
+			eTag:                 int64(testCount * 10),
+			deploymentsChanged:   make(chan interface{}, 5),
+			addSubscriber:        make(chan chan deploymentsResult),
+			removeSubscriber:     make(chan chan deploymentsResult),
 		}
 		testApiMan.InitAPI()
 		time.Sleep(100 * time.Millisecond)
@@ -274,6 +278,548 @@ var _ = Describe("api", func() {
 		})
 	})
 
+	Context("Tracking endpoints", func() {
+		var dummyClient *dummyTrackerClient
+		var testClient *http.Client
+
+		var _ = BeforeEach(func() {
+			dummyClient = &dummyTrackerClient{}
+			testApiMan.trackerCl = dummyClient
+			testClient = &http.Client{}
+		})
+
+		var _ = AfterEach(func() {
+
+		})
+
+		Context("PUT /heartbeat/{uuid}", func() {
+			It("/heartbeat should validate request", func() {
+				// setup test data
+				dummyClient.code = http.StatusOK
+				testData := [][]string{
+					{GenerateUUID(), time.Now().Format(time.RFC3339)},
+					{GenerateUUID(), time.Now().Format(iso8601)},
+					{GenerateUUID(), "invalid-time"},
+					{GenerateUUID(), time.Now().Format(time.RubyDate)},
+					{"invalid-uuid", time.Now().Format(iso8601)},
+					{"invalid-uuid", "invalid-time"},
+					{"", time.Now().Format(time.RFC3339)},
+					{GenerateUUID(), ""},
+				}
+
+				expectedCode := []int{
+					http.StatusOK,
+					http.StatusOK,
+					http.StatusBadRequest,
+					http.StatusBadRequest,
+					http.StatusBadRequest,
+					http.StatusBadRequest,
+					http.StatusNotFound,
+					http.StatusBadRequest,
+				}
+
+				expectedBody := []string{
+					strings.Join(testData[0], " "),
+					strings.Join(testData[1], " "),
+					"reportedTime",
+					"reportedTime",
+					"UUID",
+					"UUID",
+					"",
+					"reportedTime",
+				}
+
+				// setup http client
+				uri, err := url.Parse(apiTestUrl)
+				Expect(err).Should(Succeed())
+				for i, data := range testData {
+					uri.Path = strings.Replace(testApiMan.heartbeatEndpoint, "{uuid}", data[0], 1)
+					log.Debug(uri.String())
+					req, err := http.NewRequest("PUT", uri.String(), nil)
+					Expect(err).Should(Succeed())
+					req.Header.Set("reportedTime", data[1])
+					// http put
+					res, err := testClient.Do(req)
+					Expect(err).Should(Succeed())
+					// parse response
+					defer res.Body.Close()
+					Expect(res.StatusCode).Should(Equal(expectedCode[i]))
+					body, err := ioutil.ReadAll(res.Body)
+					Expect(err).Should(Succeed())
+					Expect(strings.Contains(strings.ToLower(string(body)), strings.ToLower(expectedBody[i]))).To(BeTrue())
+				}
+			})
+
+			It("/heartbeat should populate errors from tracker", func() {
+				// setup test data
+				testData := [][]string{
+					{GenerateUUID(), time.Now().Format(iso8601)},
+					{GenerateUUID(), time.Now().Format(iso8601)},
+					{GenerateUUID(), time.Now().Format(iso8601)},
+				}
+
+				expectedCode := []int{
+					http.StatusBadRequest,
+					http.StatusInternalServerError,
+					http.StatusBadGateway,
+				}
+
+				expectedBody := []string{
+					strings.Join(testData[0], " "),
+					strings.Join(testData[1], " "),
+					strings.Join(testData[2], " "),
+				}
+
+				// setup http client
+				uri, err := url.Parse(apiTestUrl)
+				Expect(err).Should(Succeed())
+				for i, data := range testData {
+					dummyClient.code = expectedCode[i]
+					uri.Path = strings.Replace(testApiMan.heartbeatEndpoint, "{uuid}", data[0], 1)
+					req, err := http.NewRequest("PUT", uri.String(), nil)
+					Expect(err).Should(Succeed())
+					req.Header.Set("reportedTime", data[1])
+					// http put
+					res, err := testClient.Do(req)
+					Expect(err).Should(Succeed())
+					// parse response
+					defer res.Body.Close()
+					Expect(res.StatusCode).Should(Equal(expectedCode[i]))
+					body, err := ioutil.ReadAll(res.Body)
+					Expect(err).Should(Succeed())
+					Expect(strings.Contains(strings.ToLower(string(body)), strings.ToLower(expectedBody[i]))).To(BeTrue())
+				}
+			})
+		})
+
+		Context("PUT /configurations/status", func() {
+			It("/configurations/status should validate request body", func() {
+				// setup test data
+				dummyClient.code = http.StatusOK
+				testData := [][]string{
+					{GenerateUUID(), time.Now().Format(iso8601)},
+					{GenerateUUID(), time.Now().Format(time.RFC3339)},
+					{GenerateUUID(), "invalid-time"},
+					{GenerateUUID(), time.Now().Format(time.RubyDate)},
+					{"invalid-uuid", time.Now().Format(iso8601)},
+					{"invalid-uuid", "invalid-time"},
+					{"", time.Now().Format(time.RFC3339)},
+					{GenerateUUID(), ""},
+				}
+
+				expectedCode := []int{
+					http.StatusOK,
+					http.StatusOK,
+					http.StatusBadRequest,
+					http.StatusBadRequest,
+					http.StatusBadRequest,
+					http.StatusBadRequest,
+					http.StatusBadRequest,
+					http.StatusBadRequest,
+				}
+
+				expectedBody := []string{
+					"",
+					"",
+					"reportedTime",
+					"reportedTime",
+					"ServiceId",
+					"ServiceId",
+					"ServiceId",
+					"reportedTime",
+				}
+
+				// setup http client
+				uri, err := url.Parse(apiTestUrl)
+				Expect(err).Should(Succeed())
+				for i, data := range testData {
+					uri.Path = testApiMan.configStatusEndpoint
+					log.Debug(uri.String())
+					configNum := mathrand.Intn(5)
+					statusDetails := make([]statusDetailsJson, 0)
+					expectedSlice := []string{}
+					for j := 0; j < configNum; j++ {
+						configStatus, expected := generateStatusDetails(0)
+						statusDetails = append(statusDetails, *configStatus)
+						expectedSlice = append(expectedSlice, expected)
+					}
+
+					expectedSlice = append(expectedSlice, data...)
+
+					if expectedCode[i] == http.StatusOK {
+						expectedBody[i] = strings.Join(expectedSlice, " ")
+					}
+
+					reqBody, err := json.Marshal(configStatusBody{
+						ServiceId:     data[0],
+						ReportedTime:  data[1],
+						StatusDetails: statusDetails,
+					})
+					Expect(err).Should(Succeed())
+					req, err := http.NewRequest("PUT", uri.String(), bytes.NewReader(reqBody))
+					Expect(err).Should(Succeed())
+					// http put
+					res, err := testClient.Do(req)
+					Expect(err).Should(Succeed())
+					// parse response
+					defer res.Body.Close()
+					Expect(res.StatusCode).Should(Equal(expectedCode[i]))
+					body, err := ioutil.ReadAll(res.Body)
+					Expect(err).Should(Succeed())
+					Expect(strings.Contains(strings.ToLower(string(body)), strings.ToLower(expectedBody[i]))).To(BeTrue())
+				}
+			})
+
+			It("/configurations/status should validate status detail", func() {
+				// setup test data
+				dummyClient.code = http.StatusOK
+				testData := [][]string{
+					{GenerateUUID(), time.Now().Format(iso8601)},
+					{GenerateUUID(), time.Now().Format(iso8601)},
+				}
+
+				expectedCode := []int{
+					http.StatusBadRequest,
+					http.StatusBadRequest,
+				}
+
+				expectedBody := []string{
+					"Status",
+					"ConfigurationId",
+				}
+
+				// setup http client
+				uri, err := url.Parse(apiTestUrl)
+				Expect(err).Should(Succeed())
+				for i, data := range testData {
+					uri.Path = testApiMan.configStatusEndpoint
+					log.Debug(uri.String())
+					configNum := mathrand.Intn(5) + 1
+					statusDetails := make([]statusDetailsJson, 0)
+					expectedSlice := []string{}
+					for j := 0; j < configNum; j++ {
+						configStatus, expected := generateStatusDetails(i + 1)
+						statusDetails = append(statusDetails, *configStatus)
+						expectedSlice = append(expectedSlice, expected)
+					}
+
+					expectedSlice = append(expectedSlice, data...)
+
+					reqBody, err := json.Marshal(configStatusBody{
+						ServiceId:     data[0],
+						ReportedTime:  data[1],
+						StatusDetails: statusDetails,
+					})
+					Expect(err).Should(Succeed())
+					req, err := http.NewRequest("PUT", uri.String(), bytes.NewReader(reqBody))
+					Expect(err).Should(Succeed())
+					// http put
+					res, err := testClient.Do(req)
+					Expect(err).Should(Succeed())
+					// parse response
+					defer res.Body.Close()
+					Expect(res.StatusCode).Should(Equal(expectedCode[i]))
+					body, err := ioutil.ReadAll(res.Body)
+					Expect(err).Should(Succeed())
+					Expect(strings.Contains(strings.ToLower(string(body)), strings.ToLower(expectedBody[i]))).To(BeTrue())
+				}
+			})
+
+			It("/configurations/status should reject invalid json, and marshal valid fields", func() {
+				// setup test data
+				dummyClient.code = http.StatusOK
+				testData := []string{
+					"invalid-json",
+					`{"serviceId":"8eebdb60-be68-4380-a902-8cd0a2a0744c",
+					"reportedTime":"2017-08-09T13:30:03.987-07:00"}`,
+					`{"invalid-field1":"8eebdb60-be68-4380-a902-8cd0a2a0744c",
+					"invalid-field2":"2017-08-09T13:30:03.987-07:00"}`,
+				}
+
+				expectedCode := []int{
+					http.StatusBadRequest,
+					http.StatusOK,
+					http.StatusBadRequest,
+				}
+
+				expectedBody := []string{
+					"json",
+					"",
+					"",
+				}
+
+				// setup http client
+				uri, err := url.Parse(apiTestUrl)
+				Expect(err).Should(Succeed())
+				for i, data := range testData {
+					uri.Path = testApiMan.configStatusEndpoint
+					log.Debug(uri.String(), data)
+					req, err := http.NewRequest("PUT", uri.String(), strings.NewReader(data))
+					Expect(err).Should(Succeed())
+					// http put
+					res, err := testClient.Do(req)
+					Expect(err).Should(Succeed())
+					// parse response
+					defer res.Body.Close()
+					Expect(res.StatusCode).Should(Equal(expectedCode[i]))
+					body, err := ioutil.ReadAll(res.Body)
+					Expect(err).Should(Succeed())
+					Expect(strings.Contains(strings.ToLower(string(body)), strings.ToLower(expectedBody[i]))).To(BeTrue())
+				}
+			})
+
+			It("/configurations/status should populate errors from tracker", func() {
+				// setup test data
+				testData := [][]string{
+					{GenerateUUID(), time.Now().Format(iso8601)},
+					{GenerateUUID(), time.Now().Format(iso8601)},
+					{GenerateUUID(), time.Now().Format(iso8601)},
+				}
+
+				expectedCode := []int{
+					http.StatusBadRequest,
+					http.StatusInternalServerError,
+					http.StatusBadGateway,
+				}
+
+				expectedBody := []string{
+					"",
+					"",
+					"",
+				}
+
+				// setup http client
+				uri, err := url.Parse(apiTestUrl)
+				Expect(err).Should(Succeed())
+				for i, data := range testData {
+					uri.Path = testApiMan.configStatusEndpoint
+					log.Debug(uri.String())
+					configNum := mathrand.Intn(5)
+					statusDetails := make([]statusDetailsJson, 0)
+					expectedSlice := []string{}
+					for j := 0; j < configNum; j++ {
+						configStatus, expected := generateStatusDetails(0)
+						statusDetails = append(statusDetails, *configStatus)
+						expectedSlice = append(expectedSlice, expected)
+					}
+
+					expectedSlice = append(expectedSlice, data...)
+
+					if expectedCode[i] == http.StatusOK {
+						expectedBody[i] = strings.Join(expectedSlice, " ")
+					}
+
+					reqBody, err := json.Marshal(configStatusBody{
+						ServiceId:     data[0],
+						ReportedTime:  data[1],
+						StatusDetails: statusDetails,
+					})
+					Expect(err).Should(Succeed())
+					req, err := http.NewRequest("PUT", uri.String(), bytes.NewReader(reqBody))
+					Expect(err).Should(Succeed())
+
+					dummyClient.code = expectedCode[i]
+					// http put
+					res, err := testClient.Do(req)
+					Expect(err).Should(Succeed())
+					// parse response
+					defer res.Body.Close()
+					Expect(res.StatusCode).Should(Equal(expectedCode[i]))
+					body, err := ioutil.ReadAll(res.Body)
+					Expect(err).Should(Succeed())
+					Expect(strings.Contains(strings.ToLower(string(body)), strings.ToLower(expectedBody[i]))).To(BeTrue())
+				}
+			})
+		})
+
+		Context("PUT /register/{uuid}", func() {
+			It("/register should validate request", func() {
+				// setup test data
+				dummyClient.code = http.StatusOK
+
+				testData := [][]string{
+					{GenerateUUID(), "pod", "podType", time.Now().Format(iso8601), "name", "type"},
+					{"", "pod", "podType", time.Now().Format(iso8601), "name", "type"},
+					{GenerateUUID(), "", "podType", time.Now().Format(iso8601), "name", "type"},
+					{GenerateUUID(), "pod", "", time.Now().Format(iso8601), "name", "type"},
+					{GenerateUUID(), "pod", "podType", "", "name", "type"},
+					{GenerateUUID(), "pod", "podType", time.Now().Format(iso8601), "", "type"},
+					{GenerateUUID(), "pod", "podType", time.Now().Format(iso8601), "name", ""},
+					{"invalid-uuid", "pod", "podType", time.Now().Format(iso8601), "name", "type"},
+					{GenerateUUID(), "pod", "podType", "invalid-time", "name", "type"},
+					{GenerateUUID(), "pod", "podType", time.Now().Format(iso8601), "name", "type"},
+				}
+
+				pathUuid := []string{
+					"",
+					GenerateUUID(),
+					"",
+					"",
+					"",
+					"",
+					"",
+					"",
+					"",
+					GenerateUUID(),
+				}
+
+				expectedCode := []int{
+					http.StatusOK,
+					http.StatusBadRequest,
+					http.StatusOK,
+					http.StatusOK,
+					http.StatusBadRequest,
+					http.StatusOK,
+					http.StatusOK,
+					http.StatusBadRequest,
+					http.StatusBadRequest,
+					http.StatusBadRequest,
+				}
+
+				expectedBody := []string{
+					strings.Join(testData[0], " "),
+					"mismatch UUID",
+					strings.Join(testData[2], " "),
+					strings.Join(testData[3], " "),
+					"reportedTime",
+					strings.Join(testData[5], " "),
+					strings.Join(testData[6], " "),
+					"UUID",
+					"reportedTime",
+					"mismatch UUID",
+				}
+
+				// setup http client
+				uri, err := url.Parse(apiTestUrl)
+				Expect(err).Should(Succeed())
+				for i, data := range testData {
+					uuid := pathUuid[i]
+					if uuid == "" {
+						uuid = data[0]
+					}
+					uri.Path = strings.Replace(testApiMan.registerEndpoint, "{uuid}", uuid, 1)
+					reqBody, err := json.Marshal(registerBody{
+						Uuid:         data[0],
+						Pod:          data[1],
+						PodType:      data[2],
+						ReportedTime: data[3],
+						Name:         data[4],
+						Type:         data[5],
+					})
+					Expect(err).Should(Succeed())
+					log.Debug(uri.String())
+					req, err := http.NewRequest("PUT", uri.String(), bytes.NewReader(reqBody))
+					Expect(err).Should(Succeed())
+					// http put
+					res, err := testClient.Do(req)
+					Expect(err).Should(Succeed())
+					// parse response
+					defer res.Body.Close()
+					Expect(res.StatusCode).Should(Equal(expectedCode[i]))
+					body, err := ioutil.ReadAll(res.Body)
+					Expect(err).Should(Succeed())
+					Expect(strings.Contains(strings.ToLower(string(body)), strings.ToLower(expectedBody[i]))).To(BeTrue())
+				}
+			})
+
+			It("/register should populate errors from tracker", func() {
+				// setup test data
+				testData := [][]string{
+					{GenerateUUID(), "pod", "podType", time.Now().Format(iso8601), "name", "type"},
+					{GenerateUUID(), "pod", "podType", time.Now().Format(iso8601), "name", "type"},
+					{GenerateUUID(), "pod", "podType", time.Now().Format(iso8601), "name", "type"},
+				}
+
+				expectedCode := []int{
+					http.StatusBadRequest,
+					http.StatusInternalServerError,
+					http.StatusBadGateway,
+				}
+
+				expectedBody := []string{
+					strings.Join(testData[0], " "),
+					strings.Join(testData[1], " "),
+					strings.Join(testData[2], " "),
+				}
+
+				// setup http client
+				uri, err := url.Parse(apiTestUrl)
+				Expect(err).Should(Succeed())
+				for i, data := range testData {
+					dummyClient.code = expectedCode[i]
+					uuid := data[0]
+					uri.Path = strings.Replace(testApiMan.registerEndpoint, "{uuid}", uuid, 1)
+					reqBody, err := json.Marshal(registerBody{
+						Uuid:         data[0],
+						Pod:          data[1],
+						PodType:      data[2],
+						ReportedTime: data[3],
+						Name:         data[4],
+						Type:         data[5],
+					})
+					Expect(err).Should(Succeed())
+					log.Debug(uri.String())
+					req, err := http.NewRequest("PUT", uri.String(), bytes.NewReader(reqBody))
+					Expect(err).Should(Succeed())
+					// http put
+					res, err := testClient.Do(req)
+					Expect(err).Should(Succeed())
+					// parse response
+					defer res.Body.Close()
+					Expect(res.StatusCode).Should(Equal(expectedCode[i]))
+					body, err := ioutil.ReadAll(res.Body)
+					Expect(err).Should(Succeed())
+					Expect(strings.Contains(strings.ToLower(string(body)), strings.ToLower(expectedBody[i]))).To(BeTrue())
+				}
+			})
+
+			It("/register should reject invalid json, and marshal valid fields", func() {
+				// setup test data
+				dummyClient.code = http.StatusOK
+
+				testData := []string{
+					"invalid-json",
+					`{"reportedTime":"2017-08-09T13:30:03.987-07:00"}`,
+					`{"invalid-field1":"8eebdb60-be68-4380-a902-8cd0a2a0744c",
+					"invalid-field2":"2017-08-09T13:30:03.987-07:00"}`,
+				}
+
+				expectedCode := []int{
+					http.StatusBadRequest,
+					http.StatusBadRequest,
+					http.StatusBadRequest,
+				}
+
+				expectedBody := []string{
+					"json",
+					"",
+					"",
+				}
+
+				// setup http client
+				uri, err := url.Parse(apiTestUrl)
+				Expect(err).Should(Succeed())
+				for i, data := range testData {
+					uuid := "8eebdb60-be68-4380-a902-8cd0a2a0744c"
+					uri.Path = strings.Replace(testApiMan.registerEndpoint, "{uuid}", uuid, 1)
+					Expect(err).Should(Succeed())
+					log.Debug(uri.String())
+					req, err := http.NewRequest("PUT", uri.String(), strings.NewReader(data))
+					Expect(err).Should(Succeed())
+					// http put
+					res, err := testClient.Do(req)
+					Expect(err).Should(Succeed())
+					// parse response
+					defer res.Body.Close()
+					Expect(res.StatusCode).Should(Equal(expectedCode[i]))
+					body, err := ioutil.ReadAll(res.Body)
+					Expect(err).Should(Succeed())
+					Expect(strings.Contains(strings.ToLower(string(body)), strings.ToLower(expectedBody[i]))).To(BeTrue())
+				}
+			})
+		})
+	})
+
 })
 
 func setTestDeployments(dummyDbMan *dummyDbManager, self string) []ApiDeploymentDetails {
@@ -332,48 +878,6 @@ func makeExpectedDetail(dep *DataDeployment, self string) *ApiDeploymentDetails 
 	return detail
 }
 
-type dummyDbManager struct {
-	unreadyBlobIds   []string
-	readyDeployments []DataDeployment
-	localFSLocation  string
-	fileResponse     chan string
-	version          string
-}
-
-func (d *dummyDbManager) setDbVersion(version string) {
-	d.version = version
-}
-
-func (d *dummyDbManager) initDb() error {
-	return nil
-}
-
-func (d *dummyDbManager) getUnreadyBlobs() ([]string, error) {
-	return d.unreadyBlobIds, nil
-}
-
-func (d *dummyDbManager) getReadyDeployments() ([]DataDeployment, error) {
-	return d.readyDeployments, nil
-}
-
-func (d *dummyDbManager) updateLocalFsLocation(blobId, localFsLocation string) error {
-	file, err := os.Open(localFsLocation)
-	if err != nil {
-		return err
-	}
-	buff := make([]byte, 36)
-	_, err = file.Read(buff)
-	if err != nil {
-		return err
-	}
-	d.fileResponse <- string(buff)
-	return nil
-}
-
-func (d *dummyDbManager) getLocalFSLocation(string) (string, error) {
-	return d.localFSLocation, nil
-}
-
 func GenerateUUID() string {
 
 	buff := make([]byte, 16)
@@ -385,4 +889,38 @@ func GenerateUUID() string {
 	buff[6] = (buff[6] | 0x40) & 0x4F
 	buff[8] = (buff[8] | 0x80) & 0xBF
 	return fmt.Sprintf("%x-%x-%x-%x-%x", buff[0:4], buff[4:6], buff[6:8], buff[8:10], buff[10:])
+}
+
+func generateStatusDetails(flag int) (*statusDetailsJson, string) {
+	id := GenerateUUID()
+	var ret *statusDetailsJson
+	var expected string
+	switch flag {
+	case 1: // invalid Status
+		ret = &statusDetailsJson{
+			Status:          "",
+			ConfigurationId: id,
+			ErrorCode:       "errorcode" + id,
+			Message:         "message" + id,
+		}
+		expected = "Status"
+	case 2: // invalid ConfigurationId
+		ret = &statusDetailsJson{
+			Status:          "status" + id,
+			ConfigurationId: "",
+			ErrorCode:       "errorcode" + id,
+			Message:         "message" + id,
+		}
+		expected = "ConfigurationId"
+	default:
+		ret = &statusDetailsJson{
+			Status:          "status" + id,
+			ConfigurationId: id,
+			ErrorCode:       "errorcode" + id,
+			Message:         "message" + id,
+		}
+		expected = strings.Join([]string{ret.Status, ret.ConfigurationId, ret.ErrorCode, ret.Message}, " ")
+	}
+
+	return ret, expected
 }

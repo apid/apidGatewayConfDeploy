@@ -43,7 +43,6 @@ const (
 	configStoragePath                = "local_storage_path"
 	maxIdleConnsPerHost              = 50
 	httpTimeout                      = time.Minute
-	configBearerToken                = "apigeesync_bearer_token"
 )
 
 var (
@@ -54,6 +53,7 @@ var (
 	debounceDuration time.Duration
 	apiServerBaseURI *url.URL
 	eventHandler     *apigeeSyncHandler
+	apidClusterId    string
 )
 
 func init() {
@@ -73,6 +73,10 @@ func initPlugin(s apid.Services) (apid.PluginData, error) {
 
 	if !config.IsSet(configBlobServerBaseURI) {
 		return pluginData, fmt.Errorf("Missing required config value: %s", configBlobServerBaseURI)
+	}
+
+	if !config.IsSet(configApidClusterID) {
+		return pluginData, fmt.Errorf("Missing required config value: %s", configApidClusterID)
 	}
 
 	var err error
@@ -122,6 +126,13 @@ func initPlugin(s apid.Services) (apid.PluginData, error) {
 			return nil
 		},
 	}
+	apidClusterId = config.GetString(configApidClusterID)
+
+	client := &trackerClient{
+		trackerBaseUrl: configApiServerBaseURI,
+		clusterId:      apidClusterId,
+		httpclient:     httpClient,
+	}
 
 	// initialize db manager
 
@@ -133,14 +144,18 @@ func initPlugin(s apid.Services) (apid.PluginData, error) {
 	// initialize api manager
 
 	apiMan := &apiManager{
-		dbMan:               dbMan,
-		deploymentsEndpoint: deploymentsEndpoint,
-		blobEndpoint:        blobEndpoint,
-		eTag:                0,
-		deploymentsChanged:  make(chan interface{}, 5),
-		addSubscriber:       make(chan chan deploymentsResult),
-		removeSubscriber:    make(chan chan deploymentsResult),
-		apiInitialized:      false,
+		dbMan:                dbMan,
+		trackerCl:            client,
+		deploymentsEndpoint:  deploymentsEndpoint,
+		blobEndpoint:         blobEndpoint,
+		configStatusEndpoint: configStatusEndpoint,
+		heartbeatEndpoint:    heartbeatEndpoint,
+		registerEndpoint:     registerEndpoint,
+		eTag:                 0,
+		deploymentsChanged:   make(chan interface{}, 5),
+		addSubscriber:        make(chan chan deploymentsResult),
+		removeSubscriber:     make(chan chan deploymentsResult),
+		apiInitialized:       false,
 	}
 
 	// initialize bundle manager
@@ -186,8 +201,4 @@ func initPlugin(s apid.Services) (apid.PluginData, error) {
 	log.Debug("end init")
 
 	return pluginData, nil
-}
-
-func getBearerToken() string {
-	return "Bearer " + config.GetString(configBearerToken)
 }
