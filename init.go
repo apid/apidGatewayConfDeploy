@@ -123,11 +123,14 @@ func initPlugin(s apid.Services) (apid.PluginData, error) {
 		},
 	}
 
+	// initialize configuration cache
+	configEtag := createConfigurationsEtag()
+
 	// initialize db manager
 
 	dbMan := &dbManager{
 		data:  services.Data(),
-		dbMux: sync.RWMutex{},
+		dbMux: &sync.RWMutex{},
 	}
 
 	// initialize api manager
@@ -136,11 +139,9 @@ func initPlugin(s apid.Services) (apid.PluginData, error) {
 		dbMan:               dbMan,
 		deploymentsEndpoint: deploymentsEndpoint,
 		blobEndpoint:        blobEndpoint,
-		eTag:                0,
-		deploymentsChanged:  make(chan interface{}, 5),
-		addSubscriber:       make(chan chan deploymentsResult),
-		removeSubscriber:    make(chan chan deploymentsResult),
+		addSubscriber:       make(chan chan interface{}, 10),
 		apiInitialized:      false,
+		configEtag: configEtag,
 	}
 
 	// initialize bundle manager
@@ -158,7 +159,6 @@ func initPlugin(s apid.Services) (apid.PluginData, error) {
 	bundleMan := &bundleManager{
 		blobServerUrl:             blobServerURL,
 		dbMan:                     dbMan,
-		apiMan:                    apiMan,
 		concurrentDownloads:       concurrentDownloads,
 		markDeploymentFailedAfter: markDeploymentFailedAfter,
 		bundleRetryDelay:          time.Second,
@@ -166,6 +166,7 @@ func initPlugin(s apid.Services) (apid.PluginData, error) {
 		downloadQueue:             make(chan *DownloadRequest, downloadQueueSize),
 		isClosed:                  new(int32),
 		client:                    httpClient,
+		configEtag:configEtag,
 	}
 
 	bundleMan.initializeBundleDownloading()
@@ -179,6 +180,7 @@ func initPlugin(s apid.Services) (apid.PluginData, error) {
 		apiMan:    apiMan,
 		bundleMan: bundleMan,
 		closed:    false,
+		configCache: configEtag,
 	}
 
 	eventHandler.initListener(services)

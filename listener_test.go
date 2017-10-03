@@ -38,8 +38,8 @@ var _ = Describe("listener", func() {
 		dummyDbMan = &dummyDbManager{}
 		dummyBundleMan = &dummyBundleManager{
 			requestChan: make(chan *DownloadRequest),
-			depChan:     make(chan *DataDeployment),
-			delChan:     make(chan *DataDeployment),
+			depChan:     make(chan *Configuration),
+			delChan:     make(chan *Configuration),
 			delBlobChan: make(chan string),
 		}
 		testHandler = &apigeeSyncHandler{
@@ -108,7 +108,7 @@ var _ = Describe("listener", func() {
 		It("Insert event should enqueue download requests for all inserted deployments", func() {
 			// emit change event
 			changes := make([]common.Change, 0)
-			deployments := make(map[string]DataDeployment)
+			deployments := make(map[string]Configuration)
 			for i := 0; i < 1+rand.Intn(10); i++ {
 				dep := makeTestDeployment()
 				change := common.Change{
@@ -279,8 +279,8 @@ var _ = Describe("listener", func() {
 
 type dummyBundleManager struct {
 	requestChan chan *DownloadRequest
-	depChan     chan *DataDeployment
-	delChan     chan *DataDeployment
+	depChan     chan *Configuration
+	delChan     chan *Configuration
 	delBlobChan chan string
 }
 
@@ -288,8 +288,8 @@ func (bm *dummyBundleManager) initializeBundleDownloading() {
 
 }
 
-func (bm *dummyBundleManager) queueDownloadRequest(dep *DataDeployment) {
-	bm.depChan <- dep
+func (bm *dummyBundleManager) queueDownloadRequest(conf *pendingConfiguration) {
+	bm.depChan <- conf.dataDeployment
 }
 
 func (bm *dummyBundleManager) enqueueRequest(req *DownloadRequest) {
@@ -302,21 +302,24 @@ func (bm *dummyBundleManager) makeDownloadRequest(blobId string) *DownloadReques
 	}
 }
 
-func (bm *dummyBundleManager) deleteBundlesFromDeployments(deployments []DataDeployment) {
+func (bm *dummyBundleManager) deleteBlobFromDeployments(deployments []Configuration) {
 	for i := range deployments {
 		bm.delChan <- &deployments[i]
 	}
 }
 
-func (bm *dummyBundleManager) deleteBundleById(blobId string) {
-	bm.delBlobChan <- blobId
+func (bm *dummyBundleManager) deleteBlobs(blobIds []string) {
+	for _, id := range blobIds {
+		bm.delBlobChan <- id
+	}
+
 }
 
 func (bm *dummyBundleManager) Close() {
 
 }
 
-func rowFromDeployment(dep *DataDeployment) common.Row {
+func rowFromDeployment(dep *Configuration) common.Row {
 	row := common.Row{}
 	row["id"] = &common.ColumnVal{Value: dep.ID}
 	row["organization_id"] = &common.ColumnVal{Value: dep.OrgID}

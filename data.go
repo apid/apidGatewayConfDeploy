@@ -25,7 +25,7 @@ var (
 	gwBlobId int64
 )
 
-type DataDeployment struct {
+type Configuration struct {
 	ID             string
 	OrgID          string
 	EnvID          string
@@ -49,15 +49,16 @@ type dbManagerInterface interface {
 	setDbVersion(string)
 	initDb() error
 	getUnreadyBlobs() ([]string, error)
-	getReadyDeployments() ([]DataDeployment, error)
+	getUnreadyConfigs() ([]*pendingConfiguration, error)
+	getReadyDeployments() ([]Configuration, error)
 	updateLocalFsLocation(string, string) error
 	getLocalFSLocation(string) (string, error)
 }
 
 type dbManager struct {
-	data  apid.DataService
-	db    apid.DB
-	dbMux sync.RWMutex
+	data       apid.DataService
+	db         apid.DB
+	dbMux      *sync.RWMutex
 }
 
 func (dbc *dbManager) setDbVersion(version string) {
@@ -135,7 +136,55 @@ func (dbc *dbManager) getUnreadyBlobs() (ids []string, err error) {
 	return
 }
 
-func (dbc *dbManager) getReadyDeployments() ([]DataDeployment, error) {
+func (dbc *dbManager) getUnreadyConfigs() ([]*pendingConfiguration, error) {
+
+	rows, err := dbc.getDb().Query(`
+	SELECT 	a.id,
+			a.organization_id,
+			a.environment_id,
+			a.bean_blob_id,
+			a.resource_blob_id,
+			a.type,
+			a.name,
+			a.revision,
+			a.path,
+			a.created_at,
+			a.created_by,
+			a.updated_at,
+			a.updated_by
+	FROM metadata_runtime_entity_metadata as a
+	WHERE a.id IN
+	(
+			SELECT a.id as id
+			FROM metadata_runtime_entity_metadata as a
+			WHERE a.bean_blob_id NOT IN
+			(SELECT b.id FROM apid_blob_available as b)
+	UNION
+			SELECT a.id as id
+			FROM metadata_runtime_entity_metadata as a
+			WHERE a.resource_blob_id NOT IN
+			(SELECT b.id FROM apid_blob_available as b)
+	)
+	WHERE id IS NOT NULL AND id != ''
+	;
+	`)
+	if err != nil {
+		log.Errorf("DB Query for project_runtime_blob_metadata failed %v", err)
+		return nil, err
+	}
+	defer rows.Close()
+	deps, err := dataDeploymentsFromRow(rows)
+	configs := make([]*pendingConfiguration, len(deps))
+	for i, dep := range deps {
+		configs[i] = &pendingConfiguration{
+			dataDeployment: &dep,
+		}
+	}
+	log.Debugf("Unready Configs %v", configs)
+	return configs, nil
+}
+
+func (dbc *dbManager) getReadyDeployments() ([]Configuration, error) {
 
 	// An alternative statement is in get_ready_deployments.sql
 	// Need testing with large data volume to determine which is better
@@ -186,14 +235,14 @@ func (dbc *dbManager) getReadyDeployments() ([]DataDeployment, error) {
 	}
 	defer rows.Close()
 
-	deployments, err := dataDeploymentsFromRow(rows)
+	configs, err := dataDeploymentsFromRow(rows)
 	if err != nil {
 		return nil, err
 	}
 
-	log.Debugf("Configurations ready: %v", deployments)
+	log.Debugf("Configurations ready: %v", configs)
 
-	return deployments, nil
+	return configs, nil
 
 }
 
@@ -244,12 +293,12 @@ func (dbc *dbManager) getLocalFSLocation(blobId string) (localFsLocation string,
 	return
 }
 
-func dataDeploymentsFromRow(rows *sql.Rows) ([]DataDeployment, error) {
-	tmp, err := structFromRows(reflect.TypeOf((*DataDeployment)(nil)).Elem(), rows)
+func dataDeploymentsFromRow(rows *sql.Rows) ([]Configuration, error) {
+	tmp, err := structFromRows(reflect.TypeOf((*Configuration)(nil)).Elem(), rows)
 	if err != nil {
 		return nil, err
 	}
-	return tmp.([]DataDeployment), nil
+	return tmp.([]Configuration), nil
 }
 
 func structFromRows(t reflect.Type, rows *sql.Rows) (interface{}, error) {

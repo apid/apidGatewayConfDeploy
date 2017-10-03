@@ -44,7 +44,7 @@ var _ = Describe("data", func() {
 		testCount += 1
 		testDbMan = &dbManager{
 			data:  services.Data(),
-			dbMux: sync.RWMutex{},
+			dbMux: &sync.RWMutex{},
 		}
 		testDbMan.setDbVersion("test" + strconv.Itoa(testCount))
 		initTestDb(testDbMan.getDb())

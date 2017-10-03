@@ -46,10 +46,7 @@ var _ = Describe("api", func() {
 			dbMan:               dummyDbMan,
 			deploymentsEndpoint: deploymentsEndpoint + strconv.Itoa(testCount),
 			blobEndpoint:        blobEndpointPath + strconv.Itoa(testCount) + "/{blobId}",
-			eTag:                int64(testCount * 10),
-			deploymentsChanged:  make(chan interface{}, 5),
-			addSubscriber:       make(chan chan deploymentsResult),
-			removeSubscriber:    make(chan chan deploymentsResult),
+			addSubscriber:       make(chan chan interface{}),
 		}
 		testApiMan.InitAPI()
 		time.Sleep(100 * time.Millisecond)
@@ -197,7 +194,7 @@ var _ = Describe("api", func() {
 				dep := makeTestDeployment()
 				dep.Created = t
 				dep.Updated = t
-				dummyDbMan.readyDeployments = []DataDeployment{*dep}
+				dummyDbMan.readyDeployments = []Configuration{*dep}
 				detail := makeExpectedDetail(dep, uri.String())
 				detail.Created = isoTime[i]
 				detail.Updated = isoTime[i]
@@ -218,29 +215,6 @@ var _ = Describe("api", func() {
 			}
 		})
 
-		It("should debounce requests", func(done Done) {
-			var in = make(chan interface{})
-			var out = make(chan []interface{})
-
-			go testApiMan.debounce(in, out, 3*time.Millisecond)
-
-			go func() {
-				defer GinkgoRecover()
-
-				received, ok := <-out
-				Expect(ok).To(BeTrue())
-				Expect(len(received)).To(Equal(2))
-
-				close(in)
-				received, ok = <-out
-				Expect(ok).To(BeFalse())
-
-				close(done)
-			}()
-
-			in <- "x"
-			in <- "y"
-		})
 
 	})
 
@@ -280,7 +254,7 @@ func setTestDeployments(dummyDbMan *dummyDbManager, self string) []ApiDeployment
 
 	mathrand.Seed(time.Now().UnixNano())
 	count := mathrand.Intn(5) + 1
-	deployments := make([]DataDeployment, count)
+	deployments := make([]Configuration, count)
 	details := make([]ApiDeploymentDetails, count)
 
 	for i := 0; i < count; i++ {
@@ -296,8 +270,8 @@ func setTestDeployments(dummyDbMan *dummyDbManager, self string) []ApiDeployment
 	return details
 }
 
-func makeTestDeployment() *DataDeployment {
-	dep := &DataDeployment{
+func makeTestDeployment() *Configuration {
+	dep := &Configuration{
 		ID:             GenerateUUID(),
 		OrgID:          GenerateUUID(),
 		EnvID:          GenerateUUID(),
@@ -315,7 +289,7 @@ func makeTestDeployment() *DataDeployment {
 	return dep
 }
 
-func makeExpectedDetail(dep *DataDeployment, self string) *ApiDeploymentDetails {
+func makeExpectedDetail(dep *Configuration, self string) *ApiDeploymentDetails {
 	detail := &ApiDeploymentDetails{
 		Self:            self + "/" + dep.ID,
 		Name:            dep.Name,
@@ -334,7 +308,8 @@ func makeExpectedDetail(dep *DataDeployment, self string) *ApiDeploymentDetails 
 
 type dummyDbManager struct {
 	unreadyBlobIds   []string
-	readyDeployments []DataDeployment
+	unreadyConfigs   []*pendingConfiguration
+	readyDeployments []Configuration
 	localFSLocation  string
 	fileResponse     chan string
 	version          string
@@ -342,6 +317,10 @@ type dummyDbManager struct {
 
 func (d *dummyDbManager) setDbVersion(version string) {
 	d.version = version
+}
+
+func (d *dummyDbManager) getUnreadyConfigs() ([]*pendingConfiguration, error) {
+	return d.unreadyConfigs, nil
 }
 
 func (d *dummyDbManager) initDb() error {
@@ -352,7 +331,7 @@ func (d *dummyDbManager) getUnreadyBlobs() ([]string, error) {
 	return d.unreadyBlobIds, nil
 }
 
-func (d *dummyDbManager) getReadyDeployments() ([]DataDeployment, error) {
+func (d *dummyDbManager) getReadyDeployments() ([]Configuration, error) {
 	return d.readyDeployments, nil
 }
 

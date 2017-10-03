@@ -69,7 +69,6 @@ var _ = Describe("api", func() {
 		testBundleMan = &bundleManager{
 			blobServerUrl:             bundleTestUrl,
 			dbMan:                     dummyDbMan,
-			apiMan:                    dummyApiMan,
 			concurrentDownloads:       concurrentDownloads,
 			markDeploymentFailedAfter: 5 * time.Second,
 			bundleRetryDelay:          time.Second,
