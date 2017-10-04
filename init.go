@@ -133,14 +133,15 @@ func initPlugin(s apid.Services) (apid.PluginData, error) {
 	// initialize api manager
 
 	apiMan := &apiManager{
-		dbMan:               dbMan,
-		deploymentsEndpoint: deploymentsEndpoint,
-		blobEndpoint:        blobEndpoint,
-		eTag:                0,
-		deploymentsChanged:  make(chan interface{}, 5),
-		addSubscriber:       make(chan chan deploymentsResult),
-		removeSubscriber:    make(chan chan deploymentsResult),
-		apiInitialized:      false,
+		dbMan:                dbMan,
+		deploymentsEndpoint:  deploymentsEndpoint,
+		blobEndpoint:         blobEndpoint,
+		deploymentIdEndpoint: deploymentIdEndpoint,
+		eTag:                 0,
+		deploymentsChanged:   make(chan interface{}, 5),
+		addSubscriber:        make(chan chan deploymentsResult),
+		removeSubscriber:     make(chan chan deploymentsResult),
+		apiInitialized:       false,
 	}
 
 	// initialize bundle manager

@@ -19,6 +19,7 @@ import (
 	"github.com/apid/apid-core/data"
 	. "github.com/onsi/ginkgo"
 	. "github.com/onsi/gomega"
+	"reflect"
 	"strconv"
 	"sync"
 	"time"
@@ -90,7 +91,7 @@ var _ = Describe("data", func() {
 		})
 
 		It("should get empty slice if no deployments are ready", func() {
-			deps, err := testDbMan.getReadyDeployments()
+			deps, err := testDbMan.getReadyDeployments("")
 			Expect(err).Should(Succeed())
 			Expect(len(deps)).Should(BeZero())
 		})
@@ -123,14 +124,41 @@ var _ = Describe("data", func() {
 			Expect(location).Should(Equal(testBlobLocalFsPrefix + testBlobId))
 		})
 
-		It("should succefully get all ready deployments", func() {
+		It("should get configuration by Id", func() {
+			config, err := testDbMan.getConfigById("3ecd351c-1173-40bf-b830-c194e5ef9038")
+			Expect(err).Should(Succeed())
+			expectedResponse := &DataDeployment{
+				ID:             "3ecd351c-1173-40bf-b830-c194e5ef9038",
+				OrgID:          "73fcac6c-5d9f-44c1-8db0-333efda3e6e8",
+				EnvID:          "ada76573-68e3-4f1a-a0f9-cbc201a97e80",
+				BlobID:         "gcs:SHA-512:8fcc902465ccb32ceff25fa9f6fb28e3b314dbc2874c0f8add02f4e29c9e2798d344c51807aa1af56035cf09d39c800cf605d627ba65723f26d8b9c83c82d2f2",
+				BlobResourceID: "gcs:SHA-512:0c648779da035bfe0ac21f6268049aa0ae74d9d6411dadefaec33991e55c2d66c807e06f7ef84e0947f7c7d63b8c9e97cf0684cbef9e0a86b947d73c74ae7455",
+				Type:           "ENVIRONMENT",
+				Name:           "test",
+				Revision:       "",
+				Path:           "/organizations/Org1//environments/test/",
+				Created:        "2017-06-27 03:14:46.018+00:00",
+				CreatedBy:      "defaultUser",
+				Updated:        "2017-06-27 03:14:46.018+00:00",
+				UpdatedBy:      "defaultUser",
+			}
+			Expect(config).ShouldNot(BeNil())
+			Expect(reflect.DeepEqual(expectedResponse, config)).Should(BeTrue())
+		})
+
+		It("should get non-nil error for nonexistent Id", func() {
+			_, err := testDbMan.getConfigById("3ecd351c-aaaa-40bf-b830-c194e5ef9038")
+			Expect(err).ShouldNot(Succeed())
+		})
+
+		It("should successfully get all ready configurations", func() {
 
 			err := testDbMan.updateLocalFsLocation(readyBlobId, testBlobLocalFsPrefix+readyBlobId)
 			Expect(err).Should(Succeed())
 			err = testDbMan.updateLocalFsLocation(readyResourceId, testBlobLocalFsPrefix+readyResourceId)
 			Expect(err).Should(Succeed())
 
-			deps, err := testDbMan.getReadyDeployments()
+			deps, err := testDbMan.getReadyDeployments("")
 			Expect(err).Should(Succeed())
 			Expect(len(deps)).Should(Equal(2))
 			for _, dep := range deps {
@@ -139,6 +167,28 @@ var _ = Describe("data", func() {
 					Expect(dep.BlobResourceID).Should(Equal(readyResourceId))
 				}
 			}
+		})
+
+		It("should get ready configurations by type filter", func() {
+
+			err := testDbMan.updateLocalFsLocation(readyBlobId, testBlobLocalFsPrefix+readyBlobId)
+			Expect(err).Should(Succeed())
+			err = testDbMan.updateLocalFsLocation(readyResourceId, testBlobLocalFsPrefix+readyResourceId)
+			Expect(err).Should(Succeed())
+
+			deps, err := testDbMan.getReadyDeployments("ORGANIZATION")
+			Expect(err).Should(Succeed())
+			Expect(len(deps)).Should(Equal(1))
+			Expect(deps[0].ID).Should(Equal("319963ff-217e-4ecc-8d6e-c3665e962d1e"))
+
+			deps, err = testDbMan.getReadyDeployments("ENVIRONMENT")
+			Expect(err).Should(Succeed())
+			Expect(len(deps)).Should(Equal(1))
+			Expect(deps[0].ID).Should(Equal("1dc4895e-6494-4b59-979f-5f4c89c073b4"))
+
+			deps, err = testDbMan.getReadyDeployments("INVALID-TYPE")
+			Expect(err).Should(Succeed())
+			Expect(len(deps)).Should(Equal(0))
 		})
 
 		It("should succefully get all unready blob ids", func() {
@@ -193,10 +243,10 @@ func initTestDb(db apid.DB) {
 		'',
 		'gcs:SHA-512:39ca7ae89bb9468af34df8bc873748b4035210c91bcc01359c092c1d51364b5f3df06bc69a40621acfaa46791af9ea41bc0f3429a84738ba1a7c8d394859601a',
 		NULL,
-		'ORGANIZATION',
+		'ENVIRONMENT',
 		'Org1',
 		'',
-		'/organizations/Org1/',
+		'/organizations/edgex01//environments/prod/',
 		'2017-06-27 03:14:45.748+00:00',
 		'defaultUser',
 		'2017-06-27 03:15:03.557+00:00',
