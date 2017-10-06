@@ -14,7 +14,7 @@
 
 package: github.com/apid/apidGatewayConfDeploy
 import:
-- package: github.com/30x/apid-core
+- package: github.com/apid/apid-core
   version: Release_170815-EdgeX-EAP
 - package: github.com/apigee-labs/transicator/common
   version: Release_170815-EdgeX-EAP
