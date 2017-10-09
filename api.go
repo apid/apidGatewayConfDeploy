@@ -15,6 +15,7 @@ package apiGatewayConfDeploy
 
 import (
 	"bytes"
+	"database/sql"
 	"encoding/json"
 	"fmt"
 	"github.com/gorilla/mux"
@@ -38,14 +39,17 @@ const (
 )
 
 const (
-	deploymentsEndpoint = "/configurations"
-	blobEndpointPath    = "/blobs"
-	blobEndpoint        = blobEndpointPath + "/{blobId}"
+	deploymentsEndpoint  = "/configurations"
+	blobEndpointPath     = "/blobs"
+	blobEndpoint         = blobEndpointPath + "/{blobId}"
+	deploymentIdEndpoint = deploymentsEndpoint + "/{configId}"
 )
 
 const (
 	API_ERR_BAD_BLOCK = iota + 1
 	API_ERR_INTERNAL
+	API_ERR_BAD_CONFIG_ID
+	API_ERR_NOT_FOUND
 )
 
 const (
@@ -102,14 +106,15 @@ type apiManagerInterface interface {
 }
 
 type apiManager struct {
-	dbMan               dbManagerInterface
-	deploymentsEndpoint string
-	blobEndpoint        string
-	eTag                int64
-	deploymentsChanged  chan interface{}
-	addSubscriber       chan chan deploymentsResult
-	removeSubscriber    chan chan deploymentsResult
-	apiInitialized      bool
+	dbMan                dbManagerInterface
+	deploymentsEndpoint  string
+	blobEndpoint         string
+	deploymentIdEndpoint string
+	eTag                 int64
+	deploymentsChanged   chan interface{}
+	addSubscriber        chan chan deploymentsResult
+	removeSubscriber     chan chan deploymentsResult
+	apiInitialized       bool
 }
 
 func (a *apiManager) InitAPI() {
@@ -118,6 +123,7 @@ func (a *apiManager) InitAPI() {
 	}
 	services.API().HandleFunc(a.deploymentsEndpoint, a.apiGetCurrentDeployments).Methods("GET")
 	services.API().HandleFunc(a.blobEndpoint, a.apiReturnBlobData).Methods("GET")
+	services.API().HandleFunc(a.deploymentIdEndpoint, a.apiHandleConfigId).Methods("GET")
 	a.apiInitialized = true
 	log.Debug("API endpoints initialized")
 }
@@ -231,6 +237,43 @@ func (a *apiManager) apiReturnBlobData(w http.ResponseWriter, r *http.Request) {
 
 }
 
+func (a *apiManager) apiHandleConfigId(w http.ResponseWriter, r *http.Request) {
+	vars := mux.Vars(r)
+	configId := vars["configId"]
+	config, err := a.dbMan.getConfigById(configId)
+	if err != nil {
+		if err == sql.ErrNoRows {
+			a.writeError(w, http.StatusNotFound, API_ERR_NOT_FOUND, "cannot find the configuration")
+		} else {
+			log.Errorf("apiHandleConfigId: %v", err)
+			a.writeInternalError(w, err.Error())
+		}
+		return
+	}
+	configDetail := ApiDeploymentDetails{
+		Self:            getHttpHost() + a.deploymentsEndpoint + "/" + config.ID,
+		Name:            config.Name,
+		Type:            config.Type,
+		Revision:        config.Revision,
+		BeanBlobUrl:     getBlobUrl(config.BlobID),
+		Org:             config.OrgID,
+		Env:             config.EnvID,
+		ResourceBlobUrl: getBlobUrl(config.BlobResourceID),
+		Path:            config.Path,
+		Created:         convertTime(config.Created),
+		Updated:         convertTime(config.Updated),
+	}
+
+	b, err := json.Marshal(configDetail)
+	if err != nil {
+		log.Errorf("unable to marshal config: %v", err)
+		w.WriteHeader(http.StatusInternalServerError)
+		return
+	}
+	log.Debugf("sending configuration %s", b)
+	w.Write(b)
+}
+
 func (a *apiManager) apiGetCurrentDeployments(w http.ResponseWriter, r *http.Request) {
 
 	// If returning without a bundle (immediately or after timeout), status = 404
@@ -240,6 +283,7 @@ func (a *apiManager) apiGetCurrentDeployments(w http.ResponseWriter, r *http.Req
 	// If timeout > 0 AND there is no deployment (or new deployment) available (per If-None-Match), then
 	// block for up to the specified number of seconds until a new deployment becomes available.
 	b := r.URL.Query().Get("block")
+	typeFilter := r.URL.Query().Get("type")
 	var timeout int
 	if b != "" {
 		var err error
@@ -266,7 +310,7 @@ func (a *apiManager) apiGetCurrentDeployments(w http.ResponseWriter, r *http.Req
 
 	// send results if different eTag
 	if eTag != ifNoneMatch {
-		a.sendReadyDeployments(w)
+		a.sendReadyDeployments(typeFilter, w)
 		return
 	}
 
@@ -285,7 +329,7 @@ func (a *apiManager) apiGetCurrentDeployments(w http.ResponseWriter, r *http.Req
 		if result.err != nil {
 			a.writeInternalError(w, "Database error")
 		} else {
-			a.sendDeployments(w, result.deployments, result.eTag)
+			a.sendDeployments(w, result.deployments, result.eTag, typeFilter)
 		}
 
 	case <-time.After(time.Duration(timeout) * time.Second):
@@ -294,22 +338,22 @@ func (a *apiManager) apiGetCurrentDeployments(w http.ResponseWriter, r *http.Req
 		if ifNoneMatch != "" {
 			w.WriteHeader(http.StatusNotModified)
 		} else {
-			a.sendReadyDeployments(w)
+			a.sendReadyDeployments(typeFilter, w)
 		}
 	}
 }
 
-func (a *apiManager) sendReadyDeployments(w http.ResponseWriter) {
+func (a *apiManager) sendReadyDeployments(typeFilter string, w http.ResponseWriter) {
 	eTag := a.getETag()
-	deployments, err := a.dbMan.getReadyDeployments()
+	deployments, err := a.dbMan.getReadyDeployments(typeFilter)
 	if err != nil {
 		a.writeInternalError(w, fmt.Sprintf("Database error: %s", err.Error()))
 		return
 	}
-	a.sendDeployments(w, deployments, eTag)
+	a.sendDeployments(w, deployments, eTag, typeFilter)
 }
 
-func (a *apiManager) sendDeployments(w http.ResponseWriter, dataDeps []DataDeployment, eTag string) {
+func (a *apiManager) sendDeployments(w http.ResponseWriter, dataDeps []DataDeployment, eTag string, typeFilter string) {
 
 	apiDeps := ApiDeploymentResponse{}
 	apiDepDetails := make([]ApiDeploymentDetails, 0)
@@ -333,6 +377,10 @@ func (a *apiManager) sendDeployments(w http.ResponseWriter, dataDeps []DataDeplo
 		})
 	}
 	apiDeps.ApiDeploymentsResponse = apiDepDetails
+
+	if typeFilter != "" {
+		apiDeps.Self += "?type=" + typeFilter
+	}
 
 	b, err := json.Marshal(apiDeps)
 	if err != nil {

@@ -14,18 +14,19 @@
 package apiGatewayConfDeploy
 
 import (
+	"database/sql"
 	"encoding/json"
-	"io/ioutil"
-	"net/http"
-	"net/url"
-
-	"crypto/rand"
 	"fmt"
+	"github.com/apid/apid-core/util"
 	. "github.com/onsi/ginkgo"
 	. "github.com/onsi/gomega"
+	"io/ioutil"
 	mathrand "math/rand"
+	"net/http"
+	"net/url"
 	"os"
 	"strconv"
+	"strings"
 	"time"
 )
 
@@ -43,13 +44,14 @@ var _ = Describe("api", func() {
 		testCount += 1
 		dummyDbMan = &dummyDbManager{}
 		testApiMan = &apiManager{
-			dbMan:               dummyDbMan,
-			deploymentsEndpoint: deploymentsEndpoint + strconv.Itoa(testCount),
-			blobEndpoint:        blobEndpointPath + strconv.Itoa(testCount) + "/{blobId}",
-			eTag:                int64(testCount * 10),
-			deploymentsChanged:  make(chan interface{}, 5),
-			addSubscriber:       make(chan chan deploymentsResult),
-			removeSubscriber:    make(chan chan deploymentsResult),
+			dbMan:                dummyDbMan,
+			deploymentsEndpoint:  deploymentsEndpoint + strconv.Itoa(testCount),
+			blobEndpoint:         blobEndpointPath + strconv.Itoa(testCount) + "/{blobId}",
+			deploymentIdEndpoint: deploymentsEndpoint + strconv.Itoa(testCount) + "/{configId}",
+			eTag:                 int64(testCount * 10),
+			deploymentsChanged:   make(chan interface{}, 5),
+			addSubscriber:        make(chan chan deploymentsResult),
+			removeSubscriber:     make(chan chan deploymentsResult),
 		}
 		testApiMan.InitAPI()
 		time.Sleep(100 * time.Millisecond)
@@ -111,6 +113,40 @@ var _ = Describe("api", func() {
 			Expect(depRes.Kind).Should(Equal(kindCollection))
 			Expect(depRes.Self).Should(Equal(uri.String()))
 			Expect(depRes.ApiDeploymentsResponse).Should(Equal(details))
+
+		})
+
+		It("should get configs by filter", func() {
+			typeFilter := "ORGANIZATION"
+			// setup http client
+			uri, err := url.Parse(apiTestUrl)
+			Expect(err).Should(Succeed())
+			uri.Path = deploymentsEndpoint + strconv.Itoa(testCount)
+			uri.RawQuery = "type=" + typeFilter
+			// set test data
+			dep := makeTestDeployment()
+
+			dummyDbMan.configurations = make(map[string]*DataDeployment)
+			dummyDbMan.configurations[typeFilter] = dep
+			detail := makeExpectedDetail(dep, strings.Split(uri.String(), "?")[0])
+
+			// http get
+			res, err := http.Get(uri.String())
+			Expect(err).Should(Succeed())
+			defer res.Body.Close()
+			Expect(res.StatusCode).Should(Equal(http.StatusOK))
+
+			// parse response
+			var depRes ApiDeploymentResponse
+			body, err := ioutil.ReadAll(res.Body)
+			Expect(err).Should(Succeed())
+			err = json.Unmarshal(body, &depRes)
+			Expect(err).Should(Succeed())
+
+			// verify response
+			Expect(depRes.Kind).Should(Equal(kindCollection))
+			Expect(depRes.Self).Should(Equal(uri.String()))
+			Expect(depRes.ApiDeploymentsResponse).Should(Equal([]ApiDeploymentDetails{*detail}))
 
 		})
 
@@ -253,7 +289,7 @@ var _ = Describe("api", func() {
 
 			// set test data
 			testFile, err := ioutil.TempFile(bundlePath, "test")
-			randString := GenerateUUID()
+			randString := util.GenerateUUID()
 			testFile.Write([]byte(randString))
 			err = testFile.Close()
 			Expect(err).Should(Succeed())
@@ -271,6 +307,89 @@ var _ = Describe("api", func() {
 			body, err := ioutil.ReadAll(res.Body)
 			Expect(err).Should(Succeed())
 			Expect(string(body)).Should(Equal(randString))
+		})
+	})
+
+	Context("GET /configurations/{configId}", func() {
+		It("should get configuration according to {configId}", func() {
+			// setup http client
+			uri, err := url.Parse(apiTestUrl)
+			Expect(err).Should(Succeed())
+			uri.Path = deploymentsEndpoint + strconv.Itoa(testCount) + "/3ecd351c-1173-40bf-b830-c194e5ef9038"
+
+			//setup test data
+			dummyDbMan.err = nil
+			dummyDbMan.configurations = make(map[string]*DataDeployment)
+			expectedConfig := &DataDeployment{
+				ID:             "3ecd351c-1173-40bf-b830-c194e5ef9038",
+				OrgID:          "73fcac6c-5d9f-44c1-8db0-333efda3e6e8",
+				EnvID:          "ada76573-68e3-4f1a-a0f9-cbc201a97e80",
+				BlobID:         "gcs:SHA-512:8fcc902465ccb32ceff25fa9f6fb28e3b314dbc2874c0f8add02f4e29c9e2798d344c51807aa1af56035cf09d39c800cf605d627ba65723f26d8b9c83c82d2f2",
+				BlobResourceID: "gcs:SHA-512:0c648779da035bfe0ac21f6268049aa0ae74d9d6411dadefaec33991e55c2d66c807e06f7ef84e0947f7c7d63b8c9e97cf0684cbef9e0a86b947d73c74ae7455",
+				Type:           "ENVIRONMENT",
+				Name:           "test",
+				Revision:       "",
+				Path:           "/organizations/Org1//environments/test/",
+				Created:        "2017-06-27 03:14:46.018+00:00",
+				CreatedBy:      "defaultUser",
+				Updated:        "2017-06-27 03:14:46.018+00:00",
+				UpdatedBy:      "defaultUser",
+			}
+			dummyDbMan.configurations[expectedConfig.ID] = expectedConfig
+			// http get
+			res, err := http.Get(uri.String())
+			Expect(err).Should(Succeed())
+			defer res.Body.Close()
+			Expect(res.StatusCode).Should(Equal(http.StatusOK))
+
+			// parse response
+			var depRes ApiDeploymentDetails
+			body, err := ioutil.ReadAll(res.Body)
+			Expect(err).Should(Succeed())
+			err = json.Unmarshal(body, &depRes)
+			Expect(err).Should(Succeed())
+
+			// verify response
+			Expect(depRes.Self).Should(ContainSubstring(expectedConfig.ID))
+			Expect(depRes.Org).Should(Equal(expectedConfig.OrgID))
+			Expect(depRes.Name).Should(Equal(expectedConfig.Name))
+			Expect(depRes.Type).Should(Equal(expectedConfig.Type))
+			Expect(depRes.Revision).Should(Equal(expectedConfig.Revision))
+			Expect(depRes.BeanBlobUrl).Should(ContainSubstring(expectedConfig.BlobID))
+			Expect(depRes.ResourceBlobUrl).Should(ContainSubstring(expectedConfig.BlobResourceID))
+			Expect(depRes.Path).Should(Equal(expectedConfig.Path))
+			Expect(depRes.Created).Should(Equal(convertTime(expectedConfig.Created)))
+			Expect(depRes.Updated).Should(Equal(convertTime(expectedConfig.Updated)))
+		})
+
+		It("should get error responses", func() {
+			// setup http client
+			uri, err := url.Parse(apiTestUrl)
+			Expect(err).Should(Succeed())
+
+			//setup test data
+			testData := [][]interface{}{
+				{util.GenerateUUID(), sql.ErrNoRows},
+				{util.GenerateUUID(), fmt.Errorf("test error")},
+			}
+			expectedCode := []int{
+				http.StatusNotFound,
+				http.StatusInternalServerError,
+			}
+
+			for i, data := range testData {
+				if data[1] != nil {
+					dummyDbMan.err = data[1].(error)
+				}
+				dummyDbMan.configurations = make(map[string]*DataDeployment)
+				dummyDbMan.configurations[data[0].(string)] = &DataDeployment{}
+				// http get
+				uri.Path = deploymentsEndpoint + strconv.Itoa(testCount) + "/" + data[0].(string)
+				res, err := http.Get(uri.String())
+				Expect(err).Should(Succeed())
+				Expect(res.StatusCode).Should(Equal(expectedCode[i]))
+				res.Body.Close()
+			}
 		})
 	})
 
@@ -298,9 +417,9 @@ func setTestDeployments(dummyDbMan *dummyDbManager, self string) []ApiDeployment
 
 func makeTestDeployment() *DataDeployment {
 	dep := &DataDeployment{
-		ID:             GenerateUUID(),
-		OrgID:          GenerateUUID(),
-		EnvID:          GenerateUUID(),
+		ID:             util.GenerateUUID(),
+		OrgID:          util.GenerateUUID(),
+		EnvID:          util.GenerateUUID(),
 		BlobID:         testBlobId,
 		BlobResourceID: "",
 		Type:           "virtual-host",
@@ -338,6 +457,8 @@ type dummyDbManager struct {
 	localFSLocation  string
 	fileResponse     chan string
 	version          string
+	configurations   map[string]*DataDeployment
+	err              error
 }
 
 func (d *dummyDbManager) setDbVersion(version string) {
@@ -352,8 +473,11 @@ func (d *dummyDbManager) getUnreadyBlobs() ([]string, error) {
 	return d.unreadyBlobIds, nil
 }
 
-func (d *dummyDbManager) getReadyDeployments() ([]DataDeployment, error) {
-	return d.readyDeployments, nil
+func (d *dummyDbManager) getReadyDeployments(typeFilter string) ([]DataDeployment, error) {
+	if typeFilter == "" {
+		return d.readyDeployments, nil
+	}
+	return []DataDeployment{*(d.configurations[typeFilter])}, nil
 }
 
 func (d *dummyDbManager) updateLocalFsLocation(blobId, localFsLocation string) error {
@@ -374,15 +498,6 @@ func (d *dummyDbManager) getLocalFSLocation(string) (string, error) {
 	return d.localFSLocation, nil
 }
 
-func GenerateUUID() string {
-
-	buff := make([]byte, 16)
-	numRead, err := rand.Read(buff)
-	if numRead != len(buff) || err != nil {
-		panic(err)
-	}
-	/* uuid v4 spec */
-	buff[6] = (buff[6] | 0x40) & 0x4F
-	buff[8] = (buff[8] | 0x80) & 0xBF
-	return fmt.Sprintf("%x-%x-%x-%x-%x", buff[0:4], buff[4:6], buff[6:8], buff[8:10], buff[10:])
+func (d *dummyDbManager) getConfigById(id string) (*DataDeployment, error) {
+	return d.configurations[id], d.err
 }

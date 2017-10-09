@@ -19,6 +19,7 @@ import (
 
 	"bytes"
 	"encoding/json"
+	"github.com/apid/apid-core/util"
 	"github.com/gorilla/mux"
 	. "github.com/onsi/ginkgo"
 	. "github.com/onsi/gomega"
@@ -96,7 +97,7 @@ var _ = Describe("api", func() {
 
 	It("should download blob according to id", func() {
 		// download blob
-		id := GenerateUUID()
+		id := util.GenerateUUID()
 		testBundleMan.enqueueRequest(testBundleMan.makeDownloadRequest(id))
 		received := <-dummyDbMan.fileResponse
 		Expect(received).Should(Equal(id))
@@ -110,7 +111,7 @@ var _ = Describe("api", func() {
 		testBundleMan.bundleRetryDelay = 50 * time.Millisecond
 
 		// download blobs
-		id := GenerateUUID()
+		id := util.GenerateUUID()
 		testBundleMan.enqueueRequest(testBundleMan.makeDownloadRequest(id))
 		received := <-dummyDbMan.fileResponse
 		Expect(received).Should(Equal(id))
@@ -126,7 +127,7 @@ var _ = Describe("api", func() {
 		testBundleMan.markDeploymentFailedAfter = 200 * time.Millisecond
 
 		// download blobs
-		id := GenerateUUID()
+		id := util.GenerateUUID()
 		req := testBundleMan.makeDownloadRequest(id)
 		Expect(req.markFailedAt.After(time.Now())).Should(BeTrue())
 		testBundleMan.enqueueRequest(req)

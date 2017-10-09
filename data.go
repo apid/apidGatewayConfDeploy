@@ -49,9 +49,10 @@ type dbManagerInterface interface {
 	setDbVersion(string)
 	initDb() error
 	getUnreadyBlobs() ([]string, error)
-	getReadyDeployments() ([]DataDeployment, error)
+	getReadyDeployments(typeFilter string) ([]DataDeployment, error)
 	updateLocalFsLocation(string, string) error
 	getLocalFSLocation(string) (string, error)
+	getConfigById(string) (*DataDeployment, error)
 }
 
 type dbManager struct {
@@ -99,6 +100,31 @@ func (dbc *dbManager) initDb() error {
 	return nil
 }
 
+func (dbc *dbManager) getConfigById(id string) (config *DataDeployment, err error) {
+	row := dbc.getDb().QueryRow(`
+	SELECT 	a.id,
+			a.organization_id,
+			a.environment_id,
+			a.bean_blob_id,
+			a.resource_blob_id,
+			a.type,
+			a.name,
+			a.revision,
+			a.path,
+			a.created_at,
+			a.created_by,
+			a.updated_at,
+			a.updated_by
+		FROM metadata_runtime_entity_metadata as a
+		WHERE a.id = ?;
+	`, id)
+	config, err = dataDeploymentsFromRow(row)
+	if err != nil {
+		return nil, err
+	}
+	return config, nil
+}
+
 // getUnreadyDeployments() returns array of resources that are not yet to be processed
 func (dbc *dbManager) getUnreadyBlobs() (ids []string, err error) {
 
@@ -135,11 +161,15 @@ func (dbc *dbManager) getUnreadyBlobs() (ids []string, err error) {
 	return
 }
 
-func (dbc *dbManager) getReadyDeployments() ([]DataDeployment, error) {
+func (dbc *dbManager) getReadyDeployments(typeFilter string) ([]DataDeployment, error) {
 
 	// An alternative statement is in get_ready_deployments.sql
 	// Need testing with large data volume to determine which is better
-	rows, err := dbc.getDb().Query(`
+
+	var rows *sql.Rows
+	var err error
+	if typeFilter == "" {
+		rows, err = dbc.getDb().Query(`
 		SELECT 	a.id,
 			a.organization_id,
 			a.environment_id,
@@ -179,6 +209,49 @@ func (dbc *dbManager) getReadyDeployments() ([]DataDeployment, error) {
 		)
 	;
 	`)
+	} else {
+		rows, err = dbc.getDb().Query(`
+		SELECT 	a.id,
+			a.organization_id,
+			a.environment_id,
+			a.bean_blob_id,
+			a.resource_blob_id,
+			a.type,
+			a.name,
+			a.revision,
+			a.path,
+			a.created_at,
+			a.created_by,
+			a.updated_at,
+			a.updated_by
+		FROM metadata_runtime_entity_metadata as a
+		WHERE a.type = ?
+		AND a.id IN (
+			SELECT
+					a.id
+				FROM metadata_runtime_entity_metadata as a
+				INNER JOIN apid_blob_available as b
+				ON a.resource_blob_id = b.id
+				WHERE a.resource_blob_id IS NOT NULL AND a.resource_blob_id != ""
+			INTERSECT
+				SELECT
+					a.id
+				FROM metadata_runtime_entity_metadata as a
+				INNER JOIN apid_blob_available as b
+				ON a.bean_blob_id = b.id
+				WHERE a.resource_blob_id IS NOT NULL AND a.resource_blob_id != ""
+
+			UNION
+				SELECT
+					a.id
+				FROM metadata_runtime_entity_metadata as a
+				INNER JOIN apid_blob_available as b
+				ON a.bean_blob_id = b.id
+				WHERE a.resource_blob_id IS NULL OR a.resource_blob_id = ""
+		)
+	;
+	`, typeFilter)
+	}
 
 	if err != nil {
 		log.Errorf("DB Query for project_runtime_blob_metadata failed %v", err)
@@ -186,7 +259,7 @@ func (dbc *dbManager) getReadyDeployments() ([]DataDeployment, error) {
 	}
 	defer rows.Close()
 
-	deployments, err := dataDeploymentsFromRow(rows)
+	deployments, err := dataDeploymentsFromRows(rows)
 	if err != nil {
 		return nil, err
 	}
@@ -244,7 +317,7 @@ func (dbc *dbManager) getLocalFSLocation(blobId string) (localFsLocation string,
 	return
 }
 
-func dataDeploymentsFromRow(rows *sql.Rows) ([]DataDeployment, error) {
+func dataDeploymentsFromRows(rows *sql.Rows) ([]DataDeployment, error) {
 	tmp, err := structFromRows(reflect.TypeOf((*DataDeployment)(nil)).Elem(), rows)
 	if err != nil {
 		return nil, err
@@ -274,4 +347,36 @@ func structFromRows(t reflect.Type, rows *sql.Rows) (interface{}, error) {
 		slice = reflect.Append(slice, v)
 	}
 	return slice.Interface(), nil
+}
+
+func dataDeploymentsFromRow(row *sql.Row) (*DataDeployment, error) {
+	tmp, err := structFromRow(reflect.TypeOf((*DataDeployment)(nil)).Elem(), row)
+	if err != nil {
+		if err != sql.ErrNoRows {
+			log.Errorf("Error in dataDeploymentsFromRow: %v", err)
+		}
+		return nil, err
+	}
+	config := tmp.(DataDeployment)
+	return &config, nil
+}
+
+func structFromRow(t reflect.Type, row *sql.Row) (interface{}, error) {
+	num := t.NumField()
+	cols := make([]interface{}, num)
+	for i := range cols {
+		cols[i] = new(sql.NullString)
+	}
+	v := reflect.New(t).Elem()
+	err := row.Scan(cols...)
+	if err != nil {
+		return nil, err
+	}
+	for i := range cols {
+		p := cols[i].(*sql.NullString)
+		if p.Valid {
+			v.Field(i).SetString(p.String)
+		}
+	}
+	return v.Interface(), nil
 }
