@@ -14,17 +14,16 @@
 package apiGatewayConfDeploy
 
 import (
-	"encoding/json"
-	"io/ioutil"
-	"net/http"
-	"net/url"
-
-	"crypto/rand"
 	"database/sql"
+	"encoding/json"
 	"fmt"
+	"github.com/apid/apid-core/util"
 	. "github.com/onsi/ginkgo"
 	. "github.com/onsi/gomega"
+	"io/ioutil"
 	mathrand "math/rand"
+	"net/http"
+	"net/url"
 	"os"
 	"strconv"
 	"strings"
@@ -290,7 +289,7 @@ var _ = Describe("api", func() {
 
 			// set test data
 			testFile, err := ioutil.TempFile(bundlePath, "test")
-			randString := GenerateUUID()
+			randString := util.GenerateUUID()
 			testFile.Write([]byte(randString))
 			err = testFile.Close()
 			Expect(err).Should(Succeed())
@@ -370,12 +369,10 @@ var _ = Describe("api", func() {
 
 			//setup test data
 			testData := [][]interface{}{
-				{"invalid-uuid", nil},
-				{GenerateUUID(), sql.ErrNoRows},
-				{GenerateUUID(), fmt.Errorf("test error")},
+				{util.GenerateUUID(), sql.ErrNoRows},
+				{util.GenerateUUID(), fmt.Errorf("test error")},
 			}
 			expectedCode := []int{
-				http.StatusBadRequest,
 				http.StatusNotFound,
 				http.StatusInternalServerError,
 			}
@@ -420,9 +417,9 @@ func setTestDeployments(dummyDbMan *dummyDbManager, self string) []ApiDeployment
 
 func makeTestDeployment() *DataDeployment {
 	dep := &DataDeployment{
-		ID:             GenerateUUID(),
-		OrgID:          GenerateUUID(),
-		EnvID:          GenerateUUID(),
+		ID:             util.GenerateUUID(),
+		OrgID:          util.GenerateUUID(),
+		EnvID:          util.GenerateUUID(),
 		BlobID:         testBlobId,
 		BlobResourceID: "",
 		Type:           "virtual-host",
@@ -503,17 +500,4 @@ func (d *dummyDbManager) getLocalFSLocation(string) (string, error) {
 
 func (d *dummyDbManager) getConfigById(id string) (*DataDeployment, error) {
 	return d.configurations[id], d.err
-}
-
-func GenerateUUID() string {
-
-	buff := make([]byte, 16)
-	numRead, err := rand.Read(buff)
-	if numRead != len(buff) || err != nil {
-		panic(err)
-	}
-	/* uuid v4 spec */
-	buff[6] = (buff[6] | 0x40) & 0x4F
-	buff[8] = (buff[8] | 0x80) & 0xBF
-	return fmt.Sprintf("%x-%x-%x-%x-%x", buff[0:4], buff[4:6], buff[6:8], buff[8:10], buff[10:])
 }

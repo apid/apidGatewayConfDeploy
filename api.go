@@ -23,7 +23,6 @@ import (
 	"io/ioutil"
 	"net/http"
 	"net/url"
-	"regexp"
 	"strconv"
 	"sync/atomic"
 	"time"
@@ -241,10 +240,6 @@ func (a *apiManager) apiReturnBlobData(w http.ResponseWriter, r *http.Request) {
 func (a *apiManager) apiHandleConfigId(w http.ResponseWriter, r *http.Request) {
 	vars := mux.Vars(r)
 	configId := vars["configId"]
-	if !isValidUuid(configId) {
-		a.writeError(w, http.StatusBadRequest, API_ERR_BAD_CONFIG_ID, "configuration id is invalid")
-		return
-	}
 	config, err := a.dbMan.getConfigById(configId)
 	if err != nil {
 		if err == sql.ErrNoRows {
@@ -431,11 +426,6 @@ func convertTime(t string) string {
 	}
 	log.Error("convertTime: Unsupported time format: " + t)
 	return t
-}
-
-func isValidUuid(uuid string) bool {
-	r := regexp.MustCompile("^[a-fA-F0-9]{8}-[a-fA-F0-9]{4}-4[a-fA-F0-9]{3}-[8|9|aA|bB][a-fA-F0-9]{3}-[a-fA-F0-9]{12}$")
-	return r.MatchString(uuid)
 }
 
 func getHttpHost() string {

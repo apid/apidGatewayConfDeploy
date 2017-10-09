@@ -17,6 +17,7 @@ package apiGatewayConfDeploy
 import (
 	"fmt"
 	"github.com/apid/apid-core"
+	"github.com/apid/apid-core/util"
 	"github.com/apigee-labs/transicator/common"
 	. "github.com/onsi/ginkgo"
 	. "github.com/onsi/gomega"
@@ -61,7 +62,7 @@ var _ = Describe("listener", func() {
 			unreadyBlobIds := make([]string, 0)
 			blobMap := make(map[string]int)
 			for i := 0; i < 1+rand.Intn(10); i++ {
-				id := GenerateUUID()
+				id := util.GenerateUUID()
 				blobMap[id] = 1
 				unreadyBlobIds = append(unreadyBlobIds, id)
 			}
@@ -172,12 +173,12 @@ var _ = Describe("listener", func() {
 			blobIdOld := make(map[string]int)
 			for i := 0; i < 1+rand.Intn(10); i++ {
 				depNew := makeTestDeployment()
-				depNew.BlobID = GenerateUUID()
-				depNew.BlobResourceID = GenerateUUID()
+				depNew.BlobID = util.GenerateUUID()
+				depNew.BlobResourceID = util.GenerateUUID()
 
 				depOld := makeTestDeployment()
-				depOld.BlobID = GenerateUUID()
-				depOld.BlobResourceID = GenerateUUID()
+				depOld.BlobID = util.GenerateUUID()
+				depOld.BlobResourceID = util.GenerateUUID()
 
 				change := common.Change{
 					Operation: common.Update,
@@ -221,14 +222,14 @@ var _ = Describe("listener", func() {
 
 			for i := 0; i < 1+rand.Intn(10); i++ {
 				depNew := makeTestDeployment()
-				depNew.BlobID = GenerateUUID()
-				depNew.BlobResourceID = GenerateUUID()
+				depNew.BlobID = util.GenerateUUID()
+				depNew.BlobResourceID = util.GenerateUUID()
 
 				depOld := makeTestDeployment()
 
 				if rand.Intn(2) == 0 {
 					// blob id changed
-					depOld.BlobID = GenerateUUID()
+					depOld.BlobID = util.GenerateUUID()
 					blobIdChangedNew[depNew.BlobID]++
 					blobIdChangedOld[depOld.BlobID]++
 				} else {
@@ -238,7 +239,7 @@ var _ = Describe("listener", func() {
 
 				if rand.Intn(2) == 0 {
 					// blob id changed
-					depOld.BlobResourceID = GenerateUUID()
+					depOld.BlobResourceID = util.GenerateUUID()
 					blobIdChangedNew[depNew.BlobResourceID]++
 					blobIdChangedOld[depOld.BlobResourceID]++
 				} else {
