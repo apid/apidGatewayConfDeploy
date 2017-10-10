@@ -57,7 +57,7 @@ var (
 )
 
 func init() {
-	apid.RegisterPlugin(initPlugin)
+	apid.RegisterPlugin(initPlugin, pluginData)
 }
 
 func initPlugin(s apid.Services) (apid.PluginData, error) {
