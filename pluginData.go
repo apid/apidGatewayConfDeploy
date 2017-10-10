@@ -17,7 +17,7 @@ import "github.com/apid/apid-core"
 
 var pluginData = apid.PluginData{
 	Name:    "apidGatewayConfDeploy",
-	Version: "0.0.1",
+	Version: "0.0.2",
 	ExtraData: map[string]interface{}{
 		"schemaVersion": "0.0.1",
 	},
