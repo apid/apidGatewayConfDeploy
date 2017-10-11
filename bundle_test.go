@@ -98,7 +98,7 @@ var _ = Describe("api", func() {
 	It("should download blob according to id", func() {
 		// download blob
 		id := util.GenerateUUID()
-		testBundleMan.enqueueRequest(testBundleMan.makeDownloadRequest(id))
+		testBundleMan.enqueueRequest(testBundleMan.makeDownloadRequest(id, nil))
 		received := <-dummyDbMan.fileResponse
 		Expect(received).Should(Equal(id))
 	})
@@ -112,7 +112,7 @@ var _ = Describe("api", func() {
 
 		// download blobs
 		id := util.GenerateUUID()
-		testBundleMan.enqueueRequest(testBundleMan.makeDownloadRequest(id))
+		testBundleMan.enqueueRequest(testBundleMan.makeDownloadRequest(id, nil))
 		received := <-dummyDbMan.fileResponse
 		Expect(received).Should(Equal(id))
 
@@ -128,7 +128,7 @@ var _ = Describe("api", func() {
 
 		// download blobs
 		id := util.GenerateUUID()
-		req := testBundleMan.makeDownloadRequest(id)
+		req := testBundleMan.makeDownloadRequest(id, nil)
 		Expect(req.markFailedAt.After(time.Now())).Should(BeTrue())
 		testBundleMan.enqueueRequest(req)
 
@@ -140,10 +140,15 @@ var _ = Describe("api", func() {
 
 type dummyApiManager struct {
 	initCalled bool
+	LSN        string
 }
 
 func (a *dummyApiManager) InitAPI() {
 	a.initCalled = true
+}
+
+func (a *dummyApiManager) notifyNewChangeList(newLSN string) {
+	a.LSN = newLSN
 }
 
 type dummyBlobServer struct {

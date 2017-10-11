@@ -76,7 +76,6 @@ func (h *apigeeSyncHandler) processSnapshot(snapshot *common.Snapshot) {
 	log.Debug("Snapshot processed")
 }
 
-// TODO make it work with new schema
 func (h *apigeeSyncHandler) startupOnExistingDatabase() {
 	// start bundle downloads that didn't finish
 	go func() {
@@ -90,7 +89,7 @@ func (h *apigeeSyncHandler) startupOnExistingDatabase() {
 
 		log.Debugf("Queuing %d blob downloads", len(blobIds))
 		for _, id := range blobIds {
-			go h.bundleMan.enqueueRequest(h.bundleMan.makeDownloadRequest(id))
+			go h.bundleMan.enqueueRequest(h.bundleMan.makeDownloadRequest(id, nil))
 		}
 	}()
 }
@@ -98,67 +97,41 @@ func (h *apigeeSyncHandler) startupOnExistingDatabase() {
 func (h *apigeeSyncHandler) processChangeList(changes *common.ChangeList) {
 
 	log.Debugf("Processing changes")
-	// changes have been applied to DB
-	var insertedDeployments, deletedDeployments []DataDeployment
-	var updatedNewBlobs, updatedOldBlobs []string
+	// changes have been applied to DB by apidApigeeSync
+	var insertedConfigs, updatedNewConfigs, updatedOldConfigs, deletedConfigs []*Configuration
 	for _, change := range changes.Changes {
 		switch change.Table {
 		case CONFIG_METADATA_TABLE:
 			switch change.Operation {
 			case common.Insert:
 				dep := dataDeploymentFromRow(change.NewRow)
-				insertedDeployments = append(insertedDeployments, dep)
+				insertedConfigs = append(insertedConfigs, &dep)
 			case common.Delete:
 				dep := dataDeploymentFromRow(change.OldRow)
-				deletedDeployments = append(deletedDeployments, dep)
+				deletedConfigs = append(deletedConfigs, &dep)
 			case common.Update:
 				depNew := dataDeploymentFromRow(change.NewRow)
 				depOld := dataDeploymentFromRow(change.OldRow)
-
-				if depOld.BlobID != depNew.BlobID {
-					updatedNewBlobs = append(updatedNewBlobs, depNew.BlobID)
-					updatedOldBlobs = append(updatedOldBlobs, depOld.BlobID)
-				}
-
-				if depOld.BlobResourceID != depNew.BlobResourceID {
-					updatedNewBlobs = append(updatedNewBlobs, depNew.BlobResourceID)
-					updatedOldBlobs = append(updatedOldBlobs, depOld.BlobResourceID)
-				}
+				updatedNewConfigs = append(updatedNewConfigs, &depNew)
+				updatedOldConfigs = append(updatedOldConfigs, &depOld)
 			default:
 				log.Errorf("unexpected operation: %s", change.Operation)
 			}
 		}
 	}
-
-	/*
-		for _, d := range deletedDeployments {
-			h.apiMan.addChangedDeployment(d.ID)
-		}
-	*/
-
-	// insert
-	for i := range insertedDeployments {
-		go h.bundleMan.queueDownloadRequest(&insertedDeployments[i])
+	// deleted old configs
+	if len(deletedConfigs)+len(updatedOldConfigs) > 0 {
+		log.Debugf("will delete %d old blobs", len(deletedConfigs)+len(updatedOldConfigs))
+		//TODO delete blobs for deleted configs
+		go h.bundleMan.deleteBlobsFromConfigs(append(deletedConfigs, updatedOldConfigs...))
 	}
 
-	// update
-	for i := range updatedNewBlobs {
-		go h.bundleMan.enqueueRequest(h.bundleMan.makeDownloadRequest(updatedNewBlobs[i]))
-	}
+	// new configs
+	h.bundleMan.downloadBlobsForChangeList(append(insertedConfigs, updatedNewConfigs...), changes.LastSequence)
 
-	for i := range updatedOldBlobs {
-		go h.bundleMan.deleteBundleById(updatedOldBlobs[i])
-	}
-
-	// delete
-	if len(deletedDeployments) > 0 {
-		log.Debugf("will delete %d old bundles", len(deletedDeployments))
-		//TODO delete bundles for deleted deployments
-		h.bundleMan.deleteBundlesFromDeployments(deletedDeployments)
-	}
 }
 
-func dataDeploymentFromRow(row common.Row) (d DataDeployment) {
+func dataDeploymentFromRow(row common.Row) (d Configuration) {
 
 	row.Get("id", &d.ID)
 	row.Get("organization_id", &d.OrgID)

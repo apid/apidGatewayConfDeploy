@@ -34,10 +34,10 @@ const (
 
 type bundleManagerInterface interface {
 	initializeBundleDownloading()
-	queueDownloadRequest(*DataDeployment)
+	downloadBlobsForChangeList(configs []*Configuration, LSN string)
 	enqueueRequest(*DownloadRequest)
-	makeDownloadRequest(string) *DownloadRequest
-	deleteBundlesFromDeployments([]DataDeployment)
+	makeDownloadRequest(blobId string, changelistRequest *ChangeListDownloadRequest) *DownloadRequest
+	deleteBlobsFromConfigs([]*Configuration)
 	deleteBundleById(string)
 	Close()
 }
@@ -82,28 +82,34 @@ func (bm *bundleManager) initializeBundleDownloading() {
 
 // download bundle blob and resource blob
 // TODO do not download duplicate blobs
-func (bm *bundleManager) queueDownloadRequest(dep *DataDeployment) {
-	blobReq := bm.makeDownloadRequest(dep.BlobID)
-	resourceReq := bm.makeDownloadRequest(dep.BlobResourceID)
+func (bm *bundleManager) queueDownloadRequest(conf *Configuration, changelistRequest *ChangeListDownloadRequest) {
+	blobReq := bm.makeDownloadRequest(conf.BlobID, changelistRequest)
+	resourceReq := bm.makeDownloadRequest(conf.BlobResourceID, changelistRequest)
 
-	go func() {
-		bm.enqueueRequest(blobReq)
-		bm.enqueueRequest(resourceReq)
-	}()
+	if blobReq != nil {
+		go bm.enqueueRequest(blobReq)
+	}
+	if resourceReq != nil {
+		go bm.enqueueRequest(resourceReq)
+	}
 }
 
-func (bm *bundleManager) makeDownloadRequest(id string) *DownloadRequest {
+func (bm *bundleManager) makeDownloadRequest(blobId string, changelistRequest *ChangeListDownloadRequest) *DownloadRequest {
+	if blobId == "" {
+		return nil
+	}
 	markFailedAt := time.Now().Add(bm.markDeploymentFailedAfter)
 	retryIn := bm.bundleRetryDelay
 	maxBackOff := 5 * time.Minute
 
 	return &DownloadRequest{
-		blobServerURL: bm.blobServerUrl,
-		bm:            bm,
-		blobId:        id,
-		backoffFunc:   createBackoff(retryIn, maxBackOff),
-		markFailedAt:  markFailedAt,
-		client:        bm.client,
+		blobServerURL:     bm.blobServerUrl,
+		bm:                bm,
+		blobId:            blobId,
+		backoffFunc:       createBackoff(retryIn, maxBackOff),
+		markFailedAt:      markFailedAt,
+		client:            bm.client,
+		changelistRequest: changelistRequest,
 	}
 }
 
@@ -112,14 +118,17 @@ func (bm *bundleManager) enqueueRequest(r *DownloadRequest) {
 	if atomic.LoadInt32(bm.isClosed) == 1 {
 		return
 	}
-	/*
-		defer func() {
-			if r := recover(); r != nil {
-				log.Warn("trying to enque requests to closed bundleManager")
-			}
-		}()
-	*/
 	bm.downloadQueue <- r
+}
+
+func (bm *bundleManager) downloadBlobsForChangeList(configs []*Configuration, LSN string) {
+	c := &ChangeListDownloadRequest{
+		bm:             bm,
+		configs:        configs,
+		attemptCounter: new(int32),
+		LSN:            LSN,
+	}
+	c.download()
 }
 
 func (bm *bundleManager) Close() {
@@ -127,25 +136,11 @@ func (bm *bundleManager) Close() {
 	close(bm.downloadQueue)
 }
 
-func (bm *bundleManager) deleteBundlesFromDeployments(deletedDeployments []DataDeployment) {
-	for _, dep := range deletedDeployments {
-		go bm.deleteBundleById(dep.BlobID)
-		go bm.deleteBundleById(dep.BlobResourceID)
+func (bm *bundleManager) deleteBlobsFromConfigs(deletedConfigs []*Configuration) {
+	for _, conf := range deletedConfigs {
+		go bm.deleteBundleById(conf.BlobID)
+		go bm.deleteBundleById(conf.BlobResourceID)
 	}
-
-	/*
-		log.Debugf("will delete %d old bundles", len(deletedDeployments))
-		go func() {
-			// give clients a minute to avoid conflicts
-			time.Sleep(bm.bundleCleanupDelay)
-			for _, dep := range deletedDeployments {
-				bundleFile := getBlobFilePath(dep.BlobID)
-				log.Debugf("removing old bundle: %v", bundleFile)
-				// TODO Remove from the Database table apid_blob_available
-				safeDelete(bundleFile)
-			}
-		}()
-	*/
 }
 
 // TODO add delete support
@@ -153,19 +148,62 @@ func (bm *bundleManager) deleteBundleById(blobId string) {
 
 }
 
+type ChangeListDownloadRequest struct {
+	bm             *bundleManager
+	configs        []*Configuration
+	attemptCounter *int32
+	LSN            string
+}
+
+func (cldr *ChangeListDownloadRequest) download() {
+	log.Debug("Attempt to download blobs for change list: %v", cldr.LSN)
+
+	if len(cldr.configs) == 0 { // If there are no new configurations in this CL
+		log.Debug("No new configs for change list: %v, expose immediately", cldr.LSN)
+		cldr.exposeChangeList()
+		return
+	}
+
+	*cldr.attemptCounter = 0
+	for _, c := range cldr.configs {
+		if c.BlobID != "" {
+			*cldr.attemptCounter++
+		}
+		if c.BlobResourceID != "" {
+			*cldr.attemptCounter++
+		}
+	}
+	for _, c := range cldr.configs {
+		cldr.bm.queueDownloadRequest(c, cldr)
+	}
+}
+
+func (cldr *ChangeListDownloadRequest) downloadAttempted() {
+	if atomic.AddInt32(cldr.attemptCounter, -1) == 0 {
+		cldr.exposeChangeList()
+	}
+}
+
+func (cldr *ChangeListDownloadRequest) exposeChangeList() {
+	go cldr.bm.apiMan.notifyNewChangeList(cldr.LSN)
+}
+
 type DownloadRequest struct {
-	bm            *bundleManager
-	blobId        string
-	backoffFunc   func()
-	markFailedAt  time.Time
-	blobServerURL string
-	client        *http.Client
+	bm                *bundleManager
+	blobId            string
+	backoffFunc       func()
+	markFailedAt      time.Time
+	blobServerURL     string
+	client            *http.Client
+	changelistRequest *ChangeListDownloadRequest
+	attempted         bool
 }
 
 func (r *DownloadRequest) downloadBundle() error {
 
 	log.Debugf("starting bundle download attempt for blobId=%s", r.blobId)
-
+	var err error
+	defer r.markAttempted(&err)
 	if r.checkTimeout() {
 		return &timeoutError{
 			markFailedAt: r.markFailedAt,
@@ -199,10 +237,7 @@ func (r *DownloadRequest) downloadBundle() error {
 		return err
 	}
 
-	log.Debugf("bundle downloaded: blobId=%s filename=%s", r.blobId, downloadedFile)
-
-	// TODO send changed deployments to subscribers (API call with "block")
-	//r.bm.apiMan.addChangedDeployment(dep.ID)
+	log.Debugf("blod downloaded and inserted: blobId=%s filename=%s", r.blobId, downloadedFile)
 
 	return nil
 }
@@ -216,6 +251,19 @@ func (r *DownloadRequest) checkTimeout() bool {
 		return true
 	}
 	return false
+}
+
+func (r *DownloadRequest) markAttempted(errp *error) {
+	if !r.attempted {
+		r.attempted = true
+		err := *errp
+		if r.changelistRequest != nil {
+			r.changelistRequest.downloadAttempted()
+		}
+		if err != nil {
+			//TODO: insert to DB as "attempted but unsuccessful"
+		}
+	}
 }
 
 func getBlobFilePath(blobId string) string {

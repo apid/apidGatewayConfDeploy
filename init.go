@@ -137,10 +137,8 @@ func initPlugin(s apid.Services) (apid.PluginData, error) {
 		deploymentsEndpoint:  deploymentsEndpoint,
 		blobEndpoint:         blobEndpoint,
 		deploymentIdEndpoint: deploymentIdEndpoint,
-		eTag:                 0,
-		deploymentsChanged:   make(chan interface{}, 5),
-		addSubscriber:        make(chan chan deploymentsResult),
-		removeSubscriber:     make(chan chan deploymentsResult),
+		newChangeListChan:    make(chan interface{}, 5),
+		addSubscriber:        make(chan chan interface{}, 100),
 		apiInitialized:       false,
 	}
 

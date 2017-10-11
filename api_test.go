@@ -42,16 +42,16 @@ var _ = Describe("api", func() {
 
 	var _ = BeforeEach(func() {
 		testCount += 1
-		dummyDbMan = &dummyDbManager{}
+		dummyDbMan = &dummyDbManager{
+			lsn: "19.1d3e9368.0",
+		}
 		testApiMan = &apiManager{
 			dbMan:                dummyDbMan,
 			deploymentsEndpoint:  deploymentsEndpoint + strconv.Itoa(testCount),
 			blobEndpoint:         blobEndpointPath + strconv.Itoa(testCount) + "/{blobId}",
 			deploymentIdEndpoint: deploymentsEndpoint + strconv.Itoa(testCount) + "/{configId}",
-			eTag:                 int64(testCount * 10),
-			deploymentsChanged:   make(chan interface{}, 5),
-			addSubscriber:        make(chan chan deploymentsResult),
-			removeSubscriber:     make(chan chan deploymentsResult),
+			newChangeListChan:    make(chan interface{}, 5),
+			addSubscriber:        make(chan chan interface{}),
 		}
 		testApiMan.InitAPI()
 		time.Sleep(100 * time.Millisecond)
@@ -126,7 +126,7 @@ var _ = Describe("api", func() {
 			// set test data
 			dep := makeTestDeployment()
 
-			dummyDbMan.configurations = make(map[string]*DataDeployment)
+			dummyDbMan.configurations = make(map[string]*Configuration)
 			dummyDbMan.configurations[typeFilter] = dep
 			detail := makeExpectedDetail(dep, strings.Split(uri.String(), "?")[0])
 
@@ -159,19 +159,19 @@ var _ = Describe("api", func() {
 
 			// set test data
 			setTestDeployments(dummyDbMan, uri.String())
-
 			// http get
 			res, err := http.Get(uri.String())
 			Expect(err).Should(Succeed())
 			defer res.Body.Close()
 			Expect(res.StatusCode).Should(Equal(http.StatusOK))
-			etag := res.Header.Get("etag")
-			Expect(etag).ShouldNot(BeEmpty())
+			lsn := res.Header.Get("x-apid-config-index")
+			Expect(lsn).ShouldNot(BeEmpty())
 
 			// send second request
+			uri.RawQuery = "apid-config-index=" + lsn
+			log.Debug(uri.String())
 			req, err := http.NewRequest("GET", uri.String(), nil)
 			req.Header.Add("Content-Type", "application/json")
-			req.Header.Add("If-None-Match", etag)
 
 			// get response
 			res, err = http.DefaultClient.Do(req)
@@ -233,7 +233,7 @@ var _ = Describe("api", func() {
 				dep := makeTestDeployment()
 				dep.Created = t
 				dep.Updated = t
-				dummyDbMan.readyDeployments = []DataDeployment{*dep}
+				dummyDbMan.readyDeployments = []Configuration{*dep}
 				detail := makeExpectedDetail(dep, uri.String())
 				detail.Created = isoTime[i]
 				detail.Updated = isoTime[i]
@@ -252,30 +252,6 @@ var _ = Describe("api", func() {
 				Expect(depRes.ApiDeploymentsResponse).Should(Equal([]ApiDeploymentDetails{*detail}))
 
 			}
-		})
-
-		It("should debounce requests", func(done Done) {
-			var in = make(chan interface{})
-			var out = make(chan []interface{})
-
-			go testApiMan.debounce(in, out, 3*time.Millisecond)
-
-			go func() {
-				defer GinkgoRecover()
-
-				received, ok := <-out
-				Expect(ok).To(BeTrue())
-				Expect(len(received)).To(Equal(2))
-
-				close(in)
-				received, ok = <-out
-				Expect(ok).To(BeFalse())
-
-				close(done)
-			}()
-
-			in <- "x"
-			in <- "y"
 		})
 
 	})
@@ -319,8 +295,8 @@ var _ = Describe("api", func() {
 
 			//setup test data
 			dummyDbMan.err = nil
-			dummyDbMan.configurations = make(map[string]*DataDeployment)
-			expectedConfig := &DataDeployment{
+			dummyDbMan.configurations = make(map[string]*Configuration)
+			expectedConfig := &Configuration{
 				ID:             "3ecd351c-1173-40bf-b830-c194e5ef9038",
 				OrgID:          "73fcac6c-5d9f-44c1-8db0-333efda3e6e8",
 				EnvID:          "ada76573-68e3-4f1a-a0f9-cbc201a97e80",
@@ -381,8 +357,8 @@ var _ = Describe("api", func() {
 				if data[1] != nil {
 					dummyDbMan.err = data[1].(error)
 				}
-				dummyDbMan.configurations = make(map[string]*DataDeployment)
-				dummyDbMan.configurations[data[0].(string)] = &DataDeployment{}
+				dummyDbMan.configurations = make(map[string]*Configuration)
+				dummyDbMan.configurations[data[0].(string)] = &Configuration{}
 				// http get
 				uri.Path = deploymentsEndpoint + strconv.Itoa(testCount) + "/" + data[0].(string)
 				res, err := http.Get(uri.String())
@@ -399,7 +375,7 @@ func setTestDeployments(dummyDbMan *dummyDbManager, self string) []ApiDeployment
 
 	mathrand.Seed(time.Now().UnixNano())
 	count := mathrand.Intn(5) + 1
-	deployments := make([]DataDeployment, count)
+	deployments := make([]Configuration, count)
 	details := make([]ApiDeploymentDetails, count)
 
 	for i := 0; i < count; i++ {
@@ -415,8 +391,8 @@ func setTestDeployments(dummyDbMan *dummyDbManager, self string) []ApiDeployment
 	return details
 }
 
-func makeTestDeployment() *DataDeployment {
-	dep := &DataDeployment{
+func makeTestDeployment() *Configuration {
+	dep := &Configuration{
 		ID:             util.GenerateUUID(),
 		OrgID:          util.GenerateUUID(),
 		EnvID:          util.GenerateUUID(),
@@ -434,7 +410,7 @@ func makeTestDeployment() *DataDeployment {
 	return dep
 }
 
-func makeExpectedDetail(dep *DataDeployment, self string) *ApiDeploymentDetails {
+func makeExpectedDetail(dep *Configuration, self string) *ApiDeploymentDetails {
 	detail := &ApiDeploymentDetails{
 		Self:            self + "/" + dep.ID,
 		Name:            dep.Name,
@@ -453,11 +429,12 @@ func makeExpectedDetail(dep *DataDeployment, self string) *ApiDeploymentDetails 
 
 type dummyDbManager struct {
 	unreadyBlobIds   []string
-	readyDeployments []DataDeployment
+	readyDeployments []Configuration
 	localFSLocation  string
 	fileResponse     chan string
 	version          string
-	configurations   map[string]*DataDeployment
+	configurations   map[string]*Configuration
+	lsn              string
 	err              error
 }
 
@@ -473,11 +450,11 @@ func (d *dummyDbManager) getUnreadyBlobs() ([]string, error) {
 	return d.unreadyBlobIds, nil
 }
 
-func (d *dummyDbManager) getReadyDeployments(typeFilter string) ([]DataDeployment, error) {
+func (d *dummyDbManager) getReadyDeployments(typeFilter string) ([]Configuration, error) {
 	if typeFilter == "" {
 		return d.readyDeployments, nil
 	}
-	return []DataDeployment{*(d.configurations[typeFilter])}, nil
+	return []Configuration{*(d.configurations[typeFilter])}, nil
 }
 
 func (d *dummyDbManager) updateLocalFsLocation(blobId, localFsLocation string) error {
@@ -498,6 +475,9 @@ func (d *dummyDbManager) getLocalFSLocation(string) (string, error) {
 	return d.localFSLocation, nil
 }
 
-func (d *dummyDbManager) getConfigById(id string) (*DataDeployment, error) {
+func (d *dummyDbManager) getConfigById(id string) (*Configuration, error) {
 	return d.configurations[id], d.err
+}
+func (d *dummyDbManager) getLastSequence() (string, error) {
+	return d.lsn, nil
 }

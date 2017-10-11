@@ -39,9 +39,8 @@ var _ = Describe("listener", func() {
 		dummyDbMan = &dummyDbManager{}
 		dummyBundleMan = &dummyBundleManager{
 			requestChan: make(chan *DownloadRequest),
-			depChan:     make(chan *DataDeployment),
-			delChan:     make(chan *DataDeployment),
-			delBlobChan: make(chan string),
+			depChan:     make(chan *Configuration),
+			delChan:     make(chan *Configuration),
 		}
 		testHandler = &apigeeSyncHandler{
 			dbMan:     dummyDbMan,
@@ -109,7 +108,7 @@ var _ = Describe("listener", func() {
 		It("Insert event should enqueue download requests for all inserted deployments", func() {
 			// emit change event
 			changes := make([]common.Change, 0)
-			deployments := make(map[string]DataDeployment)
+			deployments := make(map[string]Configuration)
 			for i := 0; i < 1+rand.Intn(10); i++ {
 				dep := makeTestDeployment()
 				change := common.Change{
@@ -169,155 +168,100 @@ var _ = Describe("listener", func() {
 		It("Update event should enqueue download requests and delete old blobs", func() {
 
 			changes := make([]common.Change, 0)
-			blobIdNew := make(map[string]int)
-			blobIdOld := make(map[string]int)
+			configsNew := make(map[string]Configuration)
+			configsOld := make(map[string]Configuration)
 			for i := 0; i < 1+rand.Intn(10); i++ {
-				depNew := makeTestDeployment()
-				depNew.BlobID = util.GenerateUUID()
-				depNew.BlobResourceID = util.GenerateUUID()
+				confNew := makeTestDeployment()
+				confNew.BlobID = util.GenerateUUID()
+				confNew.BlobResourceID = util.GenerateUUID()
 
-				depOld := makeTestDeployment()
-				depOld.BlobID = util.GenerateUUID()
-				depOld.BlobResourceID = util.GenerateUUID()
+				confOld := makeTestDeployment()
+				confOld.BlobID = util.GenerateUUID()
+				confOld.BlobResourceID = util.GenerateUUID()
 
 				change := common.Change{
 					Operation: common.Update,
 					Table:     CONFIG_METADATA_TABLE,
-					NewRow:    rowFromDeployment(depNew),
-					OldRow:    rowFromDeployment(depOld),
+					NewRow:    rowFromDeployment(confNew),
+					OldRow:    rowFromDeployment(confOld),
 				}
 				changes = append(changes, change)
 
-				blobIdNew[depNew.BlobID]++
-				blobIdNew[depNew.BlobResourceID]++
-				blobIdOld[depOld.BlobID]++
-				blobIdOld[depOld.BlobResourceID]++
+				configsNew[confNew.ID] = *confNew
+				configsOld[confOld.ID] = *confOld
 			}
+			testLSN := "1.1.1"
 
 			// emit change event
 			changeList := &common.ChangeList{
-				Changes: changes,
+				Changes:      changes,
+				LastSequence: testLSN,
 			}
 
 			apid.Events().Emit(APIGEE_SYNC_EVENT, changeList)
 
 			// verify
-			for i := 0; i < len(blobIdNew); i++ {
-				req := <-dummyBundleMan.requestChan
-				blobIdNew[req.blobId]++
-				Expect(blobIdNew[req.blobId]).Should(Equal(2))
+			for i := 0; i < len(configsNew); i++ {
+				conf := <-dummyBundleMan.depChan
+				Expect(reflect.DeepEqual(configsNew[conf.ID], *conf)).Should(BeTrue())
+				delete(configsNew, conf.ID)
 			}
-			for i := 0; i < len(blobIdOld); i++ {
-				blobId := <-dummyBundleMan.delBlobChan
-				blobIdOld[blobId]++
-				Expect(blobIdOld[blobId]).Should(Equal(2))
+			for i := 0; i < len(configsOld); i++ {
+				conf := <-dummyBundleMan.delChan
+				Expect(reflect.DeepEqual(configsOld[conf.ID], *conf)).Should(BeTrue())
+				delete(configsOld, conf.ID)
 			}
 
 		})
 
-		It("Update event should only download/delete changed blobs", func() {
-			changes := make([]common.Change, 0)
-			blobIdChangedNew := make(map[string]int)
-			blobIdChangedOld := make(map[string]int)
-
-			for i := 0; i < 1+rand.Intn(10); i++ {
-				depNew := makeTestDeployment()
-				depNew.BlobID = util.GenerateUUID()
-				depNew.BlobResourceID = util.GenerateUUID()
-
-				depOld := makeTestDeployment()
-
-				if rand.Intn(2) == 0 {
-					// blob id changed
-					depOld.BlobID = util.GenerateUUID()
-					blobIdChangedNew[depNew.BlobID]++
-					blobIdChangedOld[depOld.BlobID]++
-				} else {
-					// blob id unchanged
-					depOld.BlobID = depNew.BlobID
-				}
-
-				if rand.Intn(2) == 0 {
-					// blob id changed
-					depOld.BlobResourceID = util.GenerateUUID()
-					blobIdChangedNew[depNew.BlobResourceID]++
-					blobIdChangedOld[depOld.BlobResourceID]++
-				} else {
-					// blob id unchanged
-					depOld.BlobResourceID = depNew.BlobResourceID
-				}
-
-				change := common.Change{
-					Operation: common.Update,
-					Table:     CONFIG_METADATA_TABLE,
-					NewRow:    rowFromDeployment(depNew),
-					OldRow:    rowFromDeployment(depOld),
-				}
-				changes = append(changes, change)
-			}
-
-			// emit change event
-			changeList := &common.ChangeList{
-				Changes: changes,
-			}
-
-			apid.Events().Emit(APIGEE_SYNC_EVENT, changeList)
-
-			// verify
-			for i := 0; i < len(blobIdChangedNew); i++ {
-				req := <-dummyBundleMan.requestChan
-				blobIdChangedNew[req.blobId]++
-				Expect(blobIdChangedNew[req.blobId]).Should(Equal(2))
-			}
-			for i := 0; i < len(blobIdChangedOld); i++ {
-				blobId := <-dummyBundleMan.delBlobChan
-				blobIdChangedOld[blobId]++
-				Expect(blobIdChangedOld[blobId]).Should(Equal(2))
-			}
-		})
 	})
 })
 
 type dummyBundleManager struct {
 	requestChan chan *DownloadRequest
-	depChan     chan *DataDeployment
-	delChan     chan *DataDeployment
-	delBlobChan chan string
+	depChan     chan *Configuration
+	delChan     chan *Configuration
+	LSN         string
 }
 
 func (bm *dummyBundleManager) initializeBundleDownloading() {
 
 }
 
-func (bm *dummyBundleManager) queueDownloadRequest(dep *DataDeployment) {
-	bm.depChan <- dep
+func (bm *dummyBundleManager) downloadBlobsForChangeList(configs []*Configuration, LSN string) {
+	bm.LSN = LSN
+	for _, conf := range configs {
+		bm.depChan <- conf
+	}
+
 }
 
 func (bm *dummyBundleManager) enqueueRequest(req *DownloadRequest) {
 	bm.requestChan <- req
 }
 
-func (bm *dummyBundleManager) makeDownloadRequest(blobId string) *DownloadRequest {
+func (bm *dummyBundleManager) makeDownloadRequest(blobId string, changelistRequest *ChangeListDownloadRequest) *DownloadRequest {
 	return &DownloadRequest{
-		blobId: blobId,
+		blobId:            blobId,
+		changelistRequest: changelistRequest,
 	}
 }
 
-func (bm *dummyBundleManager) deleteBundlesFromDeployments(deployments []DataDeployment) {
+func (bm *dummyBundleManager) deleteBlobsFromConfigs(deployments []*Configuration) {
 	for i := range deployments {
-		bm.delChan <- &deployments[i]
+		bm.delChan <- deployments[i]
 	}
 }
 
 func (bm *dummyBundleManager) deleteBundleById(blobId string) {
-	bm.delBlobChan <- blobId
+
 }
 
 func (bm *dummyBundleManager) Close() {
 
 }
 
-func rowFromDeployment(dep *DataDeployment) common.Row {
+func rowFromDeployment(dep *Configuration) common.Row {
 	row := common.Row{}
 	row["id"] = &common.ColumnVal{Value: dep.ID}
 	row["organization_id"] = &common.ColumnVal{Value: dep.OrgID}

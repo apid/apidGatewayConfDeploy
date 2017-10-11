@@ -17,14 +17,15 @@ import (
 	"bytes"
 	"database/sql"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"github.com/apigee-labs/transicator/common"
 	"github.com/gorilla/mux"
 	"io"
 	"io/ioutil"
 	"net/http"
 	"net/url"
 	"strconv"
-	"sync/atomic"
 	"time"
 )
 
@@ -64,11 +65,14 @@ const (
 )
 
 const (
-	headerSteam = "application/octet-stream"
+	headerSteam           = "application/octet-stream"
+	apidConfigIndexHeader = "x-apid-config-index"
 )
 
+var ErrNoLSN = errors.New("No last sequence in DB")
+
 type deploymentsResult struct {
-	deployments []DataDeployment
+	deployments []Configuration
 	err         error
 	eTag        string
 }
@@ -101,8 +105,7 @@ type ApiDeploymentResponse struct {
 //TODO add support for block and subscriber
 type apiManagerInterface interface {
 	InitAPI()
-	//addChangedDeployment(string)
-	//distributeEvents()
+	notifyNewChangeList(newLSN string)
 }
 
 type apiManager struct {
@@ -110,10 +113,8 @@ type apiManager struct {
 	deploymentsEndpoint  string
 	blobEndpoint         string
 	deploymentIdEndpoint string
-	eTag                 int64
-	deploymentsChanged   chan interface{}
-	addSubscriber        chan chan deploymentsResult
-	removeSubscriber     chan chan deploymentsResult
+	addSubscriber        chan chan interface{}
+	newChangeListChan    chan interface{}
 	apiInitialized       bool
 }
 
@@ -124,12 +125,17 @@ func (a *apiManager) InitAPI() {
 	services.API().HandleFunc(a.deploymentsEndpoint, a.apiGetCurrentDeployments).Methods("GET")
 	services.API().HandleFunc(a.blobEndpoint, a.apiReturnBlobData).Methods("GET")
 	services.API().HandleFunc(a.deploymentIdEndpoint, a.apiHandleConfigId).Methods("GET")
+	a.initDistributeEvents()
 	a.apiInitialized = true
 	log.Debug("API endpoints initialized")
 }
 
-func (a *apiManager) addChangedDeployment(id string) {
-	a.deploymentsChanged <- id
+func (a *apiManager) initDistributeEvents() {
+	go distributeEvents(a.newChangeListChan, a.addSubscriber)
+}
+
+func (a *apiManager) notifyNewChangeList(newLSN string) {
+	a.newChangeListChan <- newLSN
 }
 
 func (a *apiManager) writeError(w http.ResponseWriter, status int, code int, reason string) {
@@ -151,70 +157,6 @@ func (a *apiManager) writeInternalError(w http.ResponseWriter, err string) {
 	a.writeError(w, http.StatusInternalServerError, API_ERR_INTERNAL, err)
 }
 
-func (a *apiManager) debounce(in chan interface{}, out chan []interface{}, window time.Duration) {
-	send := func(toSend []interface{}) {
-		if toSend != nil {
-			log.Debugf("debouncer sending: %v", toSend)
-			out <- toSend
-		}
-	}
-	var toSend []interface{}
-	for {
-		select {
-		case incoming, ok := <-in:
-			if ok {
-				log.Debugf("debouncing %v", incoming)
-				toSend = append(toSend, incoming)
-			} else {
-				send(toSend)
-				log.Debugf("closing debouncer")
-				close(out)
-				return
-			}
-		case <-time.After(window):
-			send(toSend)
-			toSend = nil
-		}
-	}
-}
-
-//TODO get notified when deployments ready
-/*
-func (a *apiManager) distributeEvents() {
-	subscribers := make(map[chan deploymentsResult]bool)
-	deliverDeployments := make(chan []interface{}, 1)
-
-	go a.debounce(a.deploymentsChanged, deliverDeployments, debounceDuration)
-
-	for {
-		select {
-		case _, ok := <-deliverDeployments:
-			if !ok {
-				return // todo: using this?
-			}
-			subs := subscribers
-			subscribers = make(map[chan deploymentsResult]bool)
-			go func() {
-				eTag := a.incrementETag()
-				deployments, err := a.dbMan.getUnreadyDeployments()
-				log.Debugf("delivering deployments to %d subscribers", len(subs))
-				for subscriber := range subs {
-					log.Debugf("delivering to: %v", subscriber)
-					subscriber <- deploymentsResult{deployments, err, eTag}
-				}
-			}()
-		case subscriber := <-a.addSubscriber:
-			log.Debugf("Add subscriber: %v", subscriber)
-			subscribers[subscriber] = true
-		case subscriber := <-a.removeSubscriber:
-			log.Debugf("Remove subscriber: %v", subscriber)
-			delete(subscribers, subscriber)
-		}
-	}
-}
-*/
-
-// TODO use If-None-Match and ETag
 func (a *apiManager) apiReturnBlobData(w http.ResponseWriter, r *http.Request) {
 
 	vars := mux.Vars(r)
@@ -282,78 +224,90 @@ func (a *apiManager) apiGetCurrentDeployments(w http.ResponseWriter, r *http.Req
 
 	// If timeout > 0 AND there is no deployment (or new deployment) available (per If-None-Match), then
 	// block for up to the specified number of seconds until a new deployment becomes available.
-	b := r.URL.Query().Get("block")
+	blockSec := r.URL.Query().Get("block")
 	typeFilter := r.URL.Query().Get("type")
+	headerLSN := r.URL.Query().Get("apid-config-index")
 	var timeout int
-	if b != "" {
-		var err error
-		timeout, err = strconv.Atoi(b)
-		if err != nil {
+	var err error
+	if blockSec != "" {
+		timeout, err = strconv.Atoi(blockSec)
+		if err != nil || timeout < 0 {
 			a.writeError(w, http.StatusBadRequest, API_ERR_BAD_BLOCK, "bad block value, must be number of seconds")
 			return
 		}
 	}
-	log.Debugf("api timeout: %d", timeout)
+	log.Debugf("/configurations long-poll timeout: %d", timeout)
 
-	// If If-None-Match header matches the ETag of current bundle list AND if the request does NOT have a 'block'
-	// query param > 0, the server returns a 304 Not Modified response indicating that the client already has the
-	// most recent bundle list.
-	ifNoneMatch := r.Header.Get("If-None-Match")
-	log.Debugf("if-none-match: %s", ifNoneMatch)
+	log.Debugf("Long-Poll-Index: %s", headerLSN)
 
-	// send unmodified if matches prior eTag and no timeout
-	eTag := a.getETag()
-	if eTag == ifNoneMatch && timeout == 0 {
-		w.WriteHeader(http.StatusNotModified)
+	// if filter by "type"
+	if typeFilter != "" {
+		a.sendReadyDeployments(typeFilter, w, "")
 		return
 	}
 
-	// send results if different eTag
-	if eTag != ifNoneMatch {
-		a.sendReadyDeployments(typeFilter, w)
-		return
+	// if no Long Poll Index
+	if headerLSN == "" {
+		headerLSN = "0.0.0"
 	}
 
-	// otherwise, subscribe to any new deployment changes
-	var newDeploymentsChannel chan deploymentsResult
-	if timeout > 0 && ifNoneMatch != "" {
-		//TODO handle block
-		//newDeploymentsChannel = make(chan deploymentsResult, 1)
-		//a.addSubscriber <- newDeploymentsChannel
-	}
-
-	log.Debug("Blocking request... Waiting for new Deployments.")
-
-	select {
-	case result := <-newDeploymentsChannel:
-		if result.err != nil {
-			a.writeInternalError(w, "Database error")
-		} else {
-			a.sendDeployments(w, result.deployments, result.eTag, typeFilter)
+	// if no filter, check for long polling
+	cmpRes, apidLSN, err := a.compareLSN(headerLSN)
+	switch {
+	case err != nil:
+		if err == ErrNoLSN { // apid hasn't got any LSN from Change Server
+			// This may happen during apid bootstrap
+			a.waitForNewCL(w, time.Duration(timeout))
 		}
-
-	case <-time.After(time.Duration(timeout) * time.Second):
-		a.removeSubscriber <- newDeploymentsChannel
-		log.Debug("Blocking deployment request timed out.")
-		if ifNoneMatch != "" {
+		log.Errorf("Error in compareLSN: %v", err)
+		a.writeInternalError(w, err.Error())
+		return
+	case cmpRes <= 0: //APID_LSN <= Header_LSN
+		if timeout == 0 { // no long polling
 			w.WriteHeader(http.StatusNotModified)
-		} else {
-			a.sendReadyDeployments(typeFilter, w)
+		} else { // long polling
+			a.waitForNewCL(w, time.Duration(timeout))
 		}
+		return
+	case cmpRes > 0: //APID_LSN > Header_LSN
+		a.sendReadyDeployments("", w, apidLSN)
+		return
 	}
 }
 
-func (a *apiManager) sendReadyDeployments(typeFilter string, w http.ResponseWriter) {
-	eTag := a.getETag()
+func (a *apiManager) waitForNewCL(w http.ResponseWriter, timeout time.Duration) {
+	ConfigChangeChan := make(chan interface{}, 1)
+	a.addSubscriber <- ConfigChangeChan
+
+	log.Debug("Long-polling... Waiting for new Deployments.")
+
+	select {
+	case LSN := <-ConfigChangeChan:
+		// send configs and LSN
+		lsn, ok := LSN.(string)
+		if !ok {
+			log.Errorf("Wrong LSN type: %v", LSN)
+			a.writeInternalError(w, "Wrong LSN type")
+			return
+		}
+		a.sendReadyDeployments("", w, lsn)
+	case <-time.After(timeout * time.Second):
+		log.Debug("long-polling configuration request timed out.")
+		w.WriteHeader(http.StatusNotModified)
+	}
+}
+
+func (a *apiManager) sendReadyDeployments(typeFilter string, w http.ResponseWriter, apidLSN string) {
 	deployments, err := a.dbMan.getReadyDeployments(typeFilter)
 	if err != nil {
+		log.Errorf("Database error: %v", err)
 		a.writeInternalError(w, fmt.Sprintf("Database error: %s", err.Error()))
 		return
 	}
-	a.sendDeployments(w, deployments, eTag, typeFilter)
+	a.sendDeployments(w, deployments, apidLSN, typeFilter)
 }
 
-func (a *apiManager) sendDeployments(w http.ResponseWriter, dataDeps []DataDeployment, eTag string, typeFilter string) {
+func (a *apiManager) sendDeployments(w http.ResponseWriter, dataDeps []Configuration, apidLSN string, typeFilter string) {
 
 	apiDeps := ApiDeploymentResponse{}
 	apiDepDetails := make([]ApiDeploymentDetails, 0)
@@ -389,20 +343,38 @@ func (a *apiManager) sendDeployments(w http.ResponseWriter, dataDeps []DataDeplo
 		return
 	}
 
-	log.Debugf("sending deployments %s: %s", eTag, b)
-	w.Header().Set("ETag", eTag)
+	log.Debugf("sending deployments %s: %s", apidLSN, b)
+	if apidLSN != "" {
+		w.Header().Set(apidConfigIndexHeader, apidLSN)
+	}
+
 	w.Write(b)
 }
 
-// call whenever the list of deployments changes
-func (a *apiManager) incrementETag() string {
-	e := atomic.AddInt64(&a.eTag, 1)
-	return strconv.FormatInt(e, 10)
-}
+func (a *apiManager) compareLSN(headerLSN string) (res int, apidLSN string, err error) {
+	apidLSN, err = a.dbMan.getLastSequence()
+	log.Debugf("apidLSN: %v", apidLSN)
+	if err != nil {
+		log.Errorf("Error when getLastSequence: %v", err)
+		return 0, "", err
+	}
+	if apidLSN == "" {
+		log.Errorf("Error when getLastSequence: %v", ErrNoLSN)
+		return 0, "", ErrNoLSN
+	}
 
-func (a *apiManager) getETag() string {
-	e := atomic.LoadInt64(&a.eTag)
-	return strconv.FormatInt(e, 10)
+	apidSeq, err := common.ParseSequence(apidLSN)
+	if err != nil {
+		log.Errorf("Error when Parse apidLSN Sequence: %v", err)
+		return 0, "", err
+	}
+	headerSeq, err := common.ParseSequence(headerLSN)
+	if err != nil {
+		log.Errorf("Error when Parse headerLSN Sequence: %v", err)
+		return 0, "", err
+	}
+
+	return apidSeq.Compare(headerSeq), apidLSN, nil
 }
 
 // escape the blobId into url

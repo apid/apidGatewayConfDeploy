@@ -127,7 +127,7 @@ var _ = Describe("data", func() {
 		It("should get configuration by Id", func() {
 			config, err := testDbMan.getConfigById("3ecd351c-1173-40bf-b830-c194e5ef9038")
 			Expect(err).Should(Succeed())
-			expectedResponse := &DataDeployment{
+			expectedResponse := &Configuration{
 				ID:             "3ecd351c-1173-40bf-b830-c194e5ef9038",
 				OrgID:          "73fcac6c-5d9f-44c1-8db0-333efda3e6e8",
 				EnvID:          "ada76573-68e3-4f1a-a0f9-cbc201a97e80",

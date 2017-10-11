@@ -25,7 +25,7 @@ var (
 	gwBlobId int64
 )
 
-type DataDeployment struct {
+type Configuration struct {
 	ID             string
 	OrgID          string
 	EnvID          string
@@ -49,10 +49,11 @@ type dbManagerInterface interface {
 	setDbVersion(string)
 	initDb() error
 	getUnreadyBlobs() ([]string, error)
-	getReadyDeployments(typeFilter string) ([]DataDeployment, error)
+	getReadyDeployments(typeFilter string) ([]Configuration, error)
 	updateLocalFsLocation(string, string) error
 	getLocalFSLocation(string) (string, error)
-	getConfigById(string) (*DataDeployment, error)
+	getConfigById(string) (*Configuration, error)
+	getLastSequence() (string, error)
 }
 
 type dbManager struct {
@@ -100,7 +101,7 @@ func (dbc *dbManager) initDb() error {
 	return nil
 }
 
-func (dbc *dbManager) getConfigById(id string) (config *DataDeployment, err error) {
+func (dbc *dbManager) getConfigById(id string) (config *Configuration, err error) {
 	row := dbc.getDb().QueryRow(`
 	SELECT 	a.id,
 			a.organization_id,
@@ -161,7 +162,7 @@ func (dbc *dbManager) getUnreadyBlobs() (ids []string, err error) {
 	return
 }
 
-func (dbc *dbManager) getReadyDeployments(typeFilter string) ([]DataDeployment, error) {
+func (dbc *dbManager) getReadyDeployments(typeFilter string) ([]Configuration, error) {
 
 	// An alternative statement is in get_ready_deployments.sql
 	// Need testing with large data volume to determine which is better
@@ -317,12 +318,27 @@ func (dbc *dbManager) getLocalFSLocation(blobId string) (localFsLocation string,
 	return
 }
 
-func dataDeploymentsFromRows(rows *sql.Rows) ([]DataDeployment, error) {
-	tmp, err := structFromRows(reflect.TypeOf((*DataDeployment)(nil)).Elem(), rows)
+func (dbc *dbManager) getLastSequence() (string, error) {
+	var lastSequence sql.NullString
+	err := dbc.getDb().QueryRow("select last_sequence from EDGEX_APID_CLUSTER LIMIT 1").Scan(&lastSequence)
+	if err != nil && err != sql.ErrNoRows {
+		log.Errorf("Failed to select last_sequence from EDGEX_APID_CLUSTER: %v", err)
+		return "", err
+	}
+	ret := ""
+	if lastSequence.Valid {
+		ret = lastSequence.String
+	}
+	log.Debugf("lastSequence: %s", lastSequence)
+	return ret, nil
+}
+
+func dataDeploymentsFromRows(rows *sql.Rows) ([]Configuration, error) {
+	tmp, err := structFromRows(reflect.TypeOf((*Configuration)(nil)).Elem(), rows)
 	if err != nil {
 		return nil, err
 	}
-	return tmp.([]DataDeployment), nil
+	return tmp.([]Configuration), nil
 }
 
 func structFromRows(t reflect.Type, rows *sql.Rows) (interface{}, error) {
@@ -349,15 +365,15 @@ func structFromRows(t reflect.Type, rows *sql.Rows) (interface{}, error) {
 	return slice.Interface(), nil
 }
 
-func dataDeploymentsFromRow(row *sql.Row) (*DataDeployment, error) {
-	tmp, err := structFromRow(reflect.TypeOf((*DataDeployment)(nil)).Elem(), row)
+func dataDeploymentsFromRow(row *sql.Row) (*Configuration, error) {
+	tmp, err := structFromRow(reflect.TypeOf((*Configuration)(nil)).Elem(), row)
 	if err != nil {
 		if err != sql.ErrNoRows {
 			log.Errorf("Error in dataDeploymentsFromRow: %v", err)
 		}
 		return nil, err
 	}
-	config := tmp.(DataDeployment)
+	config := tmp.(Configuration)
 	return &config, nil
 }
 
