@@ -107,7 +107,12 @@ type ApiDeploymentResponse struct {
 	ApiDeploymentsResponse []ApiDeploymentDetails `json:"contents"`
 }
 
-//TODO add support for block and subscriber
+type confChangeNotification struct {
+	LSN   string
+	confs []Configuration
+	err   error
+}
+
 type apiManagerInterface interface {
 	InitAPI()
 	notifyNewChangeList(newLSN string)
@@ -140,7 +145,15 @@ func (a *apiManager) initDistributeEvents() {
 }
 
 func (a *apiManager) notifyNewChangeList(newLSN string) {
-	a.newChangeListChan <- newLSN
+	confs, err := a.dbMan.getReadyDeployments("")
+	if err != nil {
+		log.Errorf("Database error in getReadyDeployments: %v", err)
+	}
+	a.newChangeListChan <- &confChangeNotification{
+		LSN:   newLSN,
+		confs: confs,
+		err:   err,
+	}
 }
 
 func (a *apiManager) writeError(w http.ResponseWriter, status int, code int, reason string) {
@@ -282,16 +295,15 @@ func (a *apiManager) waitForNewCL(w http.ResponseWriter, timeout time.Duration) 
 	log.Debug("Long-polling... Waiting for new Deployments.")
 
 	select {
-	case LSN := <-ConfigChangeChan:
+	case c := <-ConfigChangeChan:
 		// send configs and LSN
-		lsn, ok := LSN.(string)
-		if !ok {
-			log.Errorf("Wrong LSN type: %v", LSN)
-			a.writeInternalError(w, "Wrong LSN type")
+		confChange, ok := c.(*confChangeNotification)
+		if !ok || confChange.err != nil {
+			log.Errorf("Wrong confChangeNotification: %v, %v", ok, confChange)
+			a.writeInternalError(w, "Error getting configurations with long-polling")
 			return
 		}
-		//TODO: read db only once for all subscribers
-		a.sendReadyDeployments("", w, lsn)
+		a.sendDeployments(w, confChange.confs, confChange.LSN, "")
 	case <-time.After(timeout * time.Second):
 		log.Debug("long-polling configuration request timed out.")
 		w.WriteHeader(http.StatusNotModified)
