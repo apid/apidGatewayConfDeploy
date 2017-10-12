@@ -21,6 +21,10 @@ import (
 	"reflect"
 )
 
+const (
+	InitLSN = "0.0.0"
+)
+
 var (
 	gwBlobId int64
 )
@@ -53,13 +57,17 @@ type dbManagerInterface interface {
 	updateLocalFsLocation(string, string) error
 	getLocalFSLocation(string) (string, error)
 	getConfigById(string) (*Configuration, error)
-	getLastSequence() (string, error)
+	loadLsnFromDb() error
+	updateLSN(LSN string) error
+	getLSN() string
 }
 
 type dbManager struct {
-	data  apid.DataService
-	db    apid.DB
-	dbMux sync.RWMutex
+	data     apid.DataService
+	db       apid.DB
+	dbMux    sync.RWMutex
+	apidLSN  string
+	lsnMutex sync.RWMutex
 }
 
 func (dbc *dbManager) setDbVersion(version string) {
@@ -85,7 +93,7 @@ func (dbc *dbManager) initDb() error {
 	}
 	defer tx.Rollback()
 	_, err = tx.Exec(`
-	CREATE TABLE IF NOT EXISTS apid_blob_available (
+	CREATE TABLE IF NOT EXISTS APID_BLOB_AVAILABLE (
 		id text primary key,
    		local_fs_location text NOT NULL
 	);
@@ -93,11 +101,29 @@ func (dbc *dbManager) initDb() error {
 	if err != nil {
 		return err
 	}
-	err = tx.Commit()
+	_, err = tx.Exec(`
+	CREATE TABLE IF NOT EXISTS APID_CONFIGURATION_LSN (
+		lsn text primary key
+	);
+	`)
 	if err != nil {
 		return err
 	}
-	log.Debug("Database table apid_blob_available created.")
+
+	// insert a row if APID_CONFIGURATION_LSN is empty
+	_, err = tx.Exec(`
+	INSERT INTO APID_CONFIGURATION_LSN (lsn)
+	SELECT '0.0.0'
+	WHERE NOT EXISTS (SELECT * FROM APID_CONFIGURATION_LSN)
+	`)
+	if err != nil {
+		return err
+	}
+
+	if err = tx.Commit(); err != nil {
+		return err
+	}
+	log.Debug("Database table APID_BLOB_AVAILABLE, APID_CONFIGURATION_LSN created.")
 	return nil
 }
 
@@ -116,7 +142,7 @@ func (dbc *dbManager) getConfigById(id string) (config *Configuration, err error
 			a.created_by,
 			a.updated_at,
 			a.updated_by
-		FROM metadata_runtime_entity_metadata as a
+		FROM METADATA_RUNTIME_ENTITY_METADATA as a
 		WHERE a.id = ?;
 	`, id)
 	config, err = dataDeploymentsFromRow(row)
@@ -132,14 +158,14 @@ func (dbc *dbManager) getUnreadyBlobs() (ids []string, err error) {
 	rows, err := dbc.getDb().Query(`
 	SELECT id FROM (
 			SELECT a.bean_blob_id as id
-			FROM metadata_runtime_entity_metadata as a
+			FROM METADATA_RUNTIME_ENTITY_METADATA as a
 			WHERE a.bean_blob_id NOT IN
-			(SELECT b.id FROM apid_blob_available as b)
+			(SELECT b.id FROM APID_BLOB_AVAILABLE as b)
 		UNION
 			SELECT a.resource_blob_id as id
-			FROM metadata_runtime_entity_metadata as a
+			FROM METADATA_RUNTIME_ENTITY_METADATA as a
 			WHERE a.resource_blob_id NOT IN
-			(SELECT b.id FROM apid_blob_available as b)
+			(SELECT b.id FROM APID_BLOB_AVAILABLE as b)
 	)
 	WHERE id IS NOT NULL AND id != ''
 	;
@@ -184,27 +210,27 @@ func (dbc *dbManager) getReadyDeployments(typeFilter string) ([]Configuration, e
 			a.created_by,
 			a.updated_at,
 			a.updated_by
-		FROM metadata_runtime_entity_metadata as a
+		FROM METADATA_RUNTIME_ENTITY_METADATA as a
 		WHERE a.id IN (
 			SELECT
 					a.id
-				FROM metadata_runtime_entity_metadata as a
-				INNER JOIN apid_blob_available as b
+				FROM METADATA_RUNTIME_ENTITY_METADATA as a
+				INNER JOIN APID_BLOB_AVAILABLE as b
 				ON a.resource_blob_id = b.id
 				WHERE a.resource_blob_id IS NOT NULL AND a.resource_blob_id != ""
 			INTERSECT
 				SELECT
 					a.id
-				FROM metadata_runtime_entity_metadata as a
-				INNER JOIN apid_blob_available as b
+				FROM METADATA_RUNTIME_ENTITY_METADATA as a
+				INNER JOIN APID_BLOB_AVAILABLE as b
 				ON a.bean_blob_id = b.id
 				WHERE a.resource_blob_id IS NOT NULL AND a.resource_blob_id != ""
 
 			UNION
 				SELECT
 					a.id
-				FROM metadata_runtime_entity_metadata as a
-				INNER JOIN apid_blob_available as b
+				FROM METADATA_RUNTIME_ENTITY_METADATA as a
+				INNER JOIN APID_BLOB_AVAILABLE as b
 				ON a.bean_blob_id = b.id
 				WHERE a.resource_blob_id IS NULL OR a.resource_blob_id = ""
 		)
@@ -225,28 +251,28 @@ func (dbc *dbManager) getReadyDeployments(typeFilter string) ([]Configuration, e
 			a.created_by,
 			a.updated_at,
 			a.updated_by
-		FROM metadata_runtime_entity_metadata as a
+		FROM METADATA_RUNTIME_ENTITY_METADATA as a
 		WHERE a.type = ?
 		AND a.id IN (
 			SELECT
 					a.id
-				FROM metadata_runtime_entity_metadata as a
-				INNER JOIN apid_blob_available as b
+				FROM METADATA_RUNTIME_ENTITY_METADATA as a
+				INNER JOIN APID_BLOB_AVAILABLE as b
 				ON a.resource_blob_id = b.id
 				WHERE a.resource_blob_id IS NOT NULL AND a.resource_blob_id != ""
 			INTERSECT
 				SELECT
 					a.id
-				FROM metadata_runtime_entity_metadata as a
-				INNER JOIN apid_blob_available as b
+				FROM METADATA_RUNTIME_ENTITY_METADATA as a
+				INNER JOIN APID_BLOB_AVAILABLE as b
 				ON a.bean_blob_id = b.id
 				WHERE a.resource_blob_id IS NOT NULL AND a.resource_blob_id != ""
 
 			UNION
 				SELECT
 					a.id
-				FROM metadata_runtime_entity_metadata as a
-				INNER JOIN apid_blob_available as b
+				FROM METADATA_RUNTIME_ENTITY_METADATA as a
+				INNER JOIN APID_BLOB_AVAILABLE as b
 				ON a.bean_blob_id = b.id
 				WHERE a.resource_blob_id IS NULL OR a.resource_blob_id = ""
 		)
@@ -278,21 +304,21 @@ func (dbc *dbManager) updateLocalFsLocation(blobId, localFsLocation string) erro
 	}
 	defer txn.Rollback()
 	_, err = txn.Exec(`
-		INSERT OR IGNORE INTO apid_blob_available (
+		INSERT OR IGNORE INTO APID_BLOB_AVAILABLE (
 		id,
 		local_fs_location
 		) VALUES (?, ?);`, blobId, localFsLocation)
 	if err != nil {
-		log.Errorf("INSERT apid_blob_available id {%s} local_fs_location {%s} failed", localFsLocation, err)
+		log.Errorf("INSERT APID_BLOB_AVAILABLE id {%s} local_fs_location {%s} failed", localFsLocation, err)
 		return err
 	}
 	err = txn.Commit()
 	if err != nil {
-		log.Errorf("UPDATE apid_blob_available id {%s} local_fs_location {%s} failed", localFsLocation, err)
+		log.Errorf("UPDATE APID_BLOB_AVAILABLE id {%s} local_fs_location {%s} failed", localFsLocation, err)
 		return err
 	}
 
-	log.Debugf("INSERT apid_blob_available {%s} local_fs_location {%s} succeeded", blobId, localFsLocation)
+	log.Debugf("INSERT APID_BLOB_AVAILABLE {%s} local_fs_location {%s} succeeded", blobId, localFsLocation)
 	return nil
 
 }
@@ -300,7 +326,7 @@ func (dbc *dbManager) updateLocalFsLocation(blobId, localFsLocation string) erro
 func (dbc *dbManager) getLocalFSLocation(blobId string) (localFsLocation string, err error) {
 
 	log.Debugf("Getting the blob file for blobId {%s}", blobId)
-	rows, err := dbc.getDb().Query("SELECT local_fs_location FROM apid_blob_available WHERE id = '" + blobId + "'")
+	rows, err := dbc.getDb().Query("SELECT local_fs_location FROM APID_BLOB_AVAILABLE WHERE id = '" + blobId + "'")
 	if err != nil {
 		log.Errorf("SELECT local_fs_location failed %v", err)
 		return "", err
@@ -318,19 +344,54 @@ func (dbc *dbManager) getLocalFSLocation(blobId string) (localFsLocation string,
 	return
 }
 
-func (dbc *dbManager) getLastSequence() (string, error) {
-	var lastSequence sql.NullString
-	err := dbc.getDb().QueryRow("select last_sequence from EDGEX_APID_CLUSTER LIMIT 1").Scan(&lastSequence)
+func (dbc *dbManager) loadLsnFromDb() error {
+	var LSN sql.NullString
+	ret := InitLSN
+
+	// If there's LSN for configuration
+	err := dbc.getDb().QueryRow("select lsn from APID_CONFIGURATION_LSN LIMIT 1").Scan(&LSN)
 	if err != nil && err != sql.ErrNoRows {
-		log.Errorf("Failed to select last_sequence from EDGEX_APID_CLUSTER: %v", err)
-		return "", err
+		log.Errorf("Failed to select lsn from APID_CONFIGURATION_LSN: %v", err)
+		return err
 	}
-	ret := ""
-	if lastSequence.Valid {
-		ret = lastSequence.String
+	if LSN.Valid {
+		ret = LSN.String
+		log.Debugf("LSN from APID_CONFIGURATION_LSN: %s", LSN)
 	}
-	log.Debugf("lastSequence: %s", lastSequence)
-	return ret, nil
+	dbc.lsnMutex.Lock()
+	defer dbc.lsnMutex.Unlock()
+	dbc.apidLSN = ret
+	return nil
+}
+
+func (dbc *dbManager) getLSN() string {
+	dbc.lsnMutex.RLock()
+	defer dbc.lsnMutex.RUnlock()
+	return dbc.apidLSN
+}
+
+func (dbc *dbManager) updateLSN(LSN string) (err error) {
+
+	tx, err := dbc.getDb().Begin()
+	if err != nil {
+		log.Errorf("getApidInstanceInfo: Unable to get DB tx Err: {%v}", err)
+		return
+	}
+	defer tx.Rollback()
+	_, err = tx.Exec("UPDATE APID_CONFIGURATION_LSN SET lsn=?;", LSN)
+	if err != nil {
+		log.Errorf("UPDATE APID_CONFIGURATION_LSN Failed: %v", err)
+		return
+	}
+	log.Debugf("UPDATE APID_CONFIGURATION_LSN Success: %s", LSN)
+	if err = tx.Commit(); err != nil {
+		log.Errorf("Commit error in updateLSN: %v", err)
+		return
+	}
+	dbc.lsnMutex.Lock()
+	defer dbc.lsnMutex.Unlock()
+	dbc.apidLSN = LSN
+	return
 }
 
 func dataDeploymentsFromRows(rows *sql.Rows) ([]Configuration, error) {

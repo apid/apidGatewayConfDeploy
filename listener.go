@@ -72,6 +72,11 @@ func (h *apigeeSyncHandler) processSnapshot(snapshot *common.Snapshot) {
 	h.dbMan.setDbVersion(snapshot.SnapshotInfo)
 
 	h.startupOnExistingDatabase()
+	if lsn := h.dbMan.getLSN(); lsn != "" {
+		h.dbMan.updateLSN(lsn)
+	} else { //apid just started
+		h.dbMan.loadLsnFromDb()
+	}
 	h.apiMan.InitAPI()
 	log.Debug("Snapshot processed")
 }
@@ -99,9 +104,11 @@ func (h *apigeeSyncHandler) processChangeList(changes *common.ChangeList) {
 	log.Debugf("Processing changes")
 	// changes have been applied to DB by apidApigeeSync
 	var insertedConfigs, updatedNewConfigs, updatedOldConfigs, deletedConfigs []*Configuration
+	isConfigChanged := false
 	for _, change := range changes.Changes {
 		switch change.Table {
 		case CONFIG_METADATA_TABLE:
+			isConfigChanged = true
 			switch change.Operation {
 			case common.Insert:
 				dep := dataDeploymentFromRow(change.NewRow)
@@ -119,15 +126,20 @@ func (h *apigeeSyncHandler) processChangeList(changes *common.ChangeList) {
 			}
 		}
 	}
-	// deleted old configs
+	// delete old configs from FS
 	if len(deletedConfigs)+len(updatedOldConfigs) > 0 {
 		log.Debugf("will delete %d old blobs", len(deletedConfigs)+len(updatedOldConfigs))
 		//TODO delete blobs for deleted configs
 		go h.bundleMan.deleteBlobsFromConfigs(append(deletedConfigs, updatedOldConfigs...))
 	}
 
-	// new configs
-	h.bundleMan.downloadBlobsForChangeList(append(insertedConfigs, updatedNewConfigs...), changes.LastSequence)
+	// download and expose new configs
+	if isConfigChanged {
+		h.dbMan.updateLSN(changes.LastSequence)
+		h.bundleMan.downloadBlobsForChangeList(append(insertedConfigs, updatedNewConfigs...), changes.LastSequence)
+	} else if h.dbMan.getLSN() == InitLSN {
+		h.dbMan.updateLSN(changes.LastSequence)
+	}
 
 }
 

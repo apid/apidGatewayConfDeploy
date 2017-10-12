@@ -34,6 +34,7 @@ const (
 
 type bundleManagerInterface interface {
 	initializeBundleDownloading()
+	// if `configs` is empty, it just exposes the changeList
 	downloadBlobsForChangeList(configs []*Configuration, LSN string)
 	enqueueRequest(*DownloadRequest)
 	makeDownloadRequest(blobId string, changelistRequest *ChangeListDownloadRequest) *DownloadRequest
@@ -226,8 +227,6 @@ func (r *DownloadRequest) downloadBundle() error {
 		return err
 	}
 
-	log.Debugf("blod downloaded. blobid=%s  filepath=%s", r.blobId, downloadedFile)
-
 	err = r.bm.dbMan.updateLocalFsLocation(r.blobId, downloadedFile)
 	if err != nil {
 		log.Errorf("updateLocalFsLocation failed: blobId=%s", r.blobId)
@@ -311,7 +310,7 @@ func getSignedURL(client *http.Client, blobServerURL string, blobId string) (str
 func downloadFromURI(client *http.Client, blobServerURL string, blobId string) (tempFileName string, err error) {
 
 	var tempFile *os.File
-	log.Debugf("Downloading bundle: %s", blobId)
+	log.Debugf("Downloading Blob: %s", blobId)
 
 	uri, err := getSignedURL(client, blobServerURL, blobId)
 	if err != nil {
@@ -330,18 +329,18 @@ func downloadFromURI(client *http.Client, blobServerURL string, blobId string) (
 	var confReader io.ReadCloser
 	confReader, err = getUriReaderWithAuth(client, uri)
 	if err != nil {
-		log.Errorf("Unable to retrieve bundle %s: %v", uri, err)
+		log.Errorf("Unable to retrieve Blob %s: %v", uri, err)
 		return
 	}
 	defer confReader.Close()
 
 	_, err = io.Copy(tempFile, confReader)
 	if err != nil {
-		log.Errorf("Unable to write bundle %s: %v", tempFileName, err)
+		log.Errorf("Unable to write Blob %s: %v", tempFileName, err)
 		return
 	}
 
-	log.Debugf("Bundle %s downloaded to: %s", uri, tempFileName)
+	log.Debugf("Blob %s downloaded to: %s", uri, tempFileName)
 	return
 }
 

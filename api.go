@@ -66,10 +66,14 @@ const (
 
 const (
 	headerSteam           = "application/octet-stream"
+	apidConfigIndexPar    = "apid-config-index"
 	apidConfigIndexHeader = "x-apid-config-index"
 )
 
-var ErrNoLSN = errors.New("No last sequence in DB")
+var (
+	ErrNoLSN      = errors.New("No last sequence in DB")
+	ErrInvalidLSN = errors.New(apidConfigIndexPar + " is invalid")
+)
 
 type deploymentsResult struct {
 	deployments []Configuration
@@ -122,7 +126,7 @@ func (a *apiManager) InitAPI() {
 	if a.apiInitialized {
 		return
 	}
-	services.API().HandleFunc(a.deploymentsEndpoint, a.apiGetCurrentDeployments).Methods("GET")
+	services.API().HandleFunc(a.deploymentsEndpoint, a.apiGetCurrentConfigs).Methods("GET")
 	services.API().HandleFunc(a.blobEndpoint, a.apiReturnBlobData).Methods("GET")
 	services.API().HandleFunc(a.deploymentIdEndpoint, a.apiHandleConfigId).Methods("GET")
 	a.initDistributeEvents()
@@ -216,7 +220,7 @@ func (a *apiManager) apiHandleConfigId(w http.ResponseWriter, r *http.Request) {
 	w.Write(b)
 }
 
-func (a *apiManager) apiGetCurrentDeployments(w http.ResponseWriter, r *http.Request) {
+func (a *apiManager) apiGetCurrentConfigs(w http.ResponseWriter, r *http.Request) {
 
 	// If returning without a bundle (immediately or after timeout), status = 404
 	// If returning If-None-Match value is equal to current deployment, status = 304
@@ -226,7 +230,7 @@ func (a *apiManager) apiGetCurrentDeployments(w http.ResponseWriter, r *http.Req
 	// block for up to the specified number of seconds until a new deployment becomes available.
 	blockSec := r.URL.Query().Get("block")
 	typeFilter := r.URL.Query().Get("type")
-	headerLSN := r.URL.Query().Get("apid-config-index")
+	headerLSN := r.URL.Query().Get(apidConfigIndexPar)
 	var timeout int
 	var err error
 	if blockSec != "" {
@@ -246,18 +250,13 @@ func (a *apiManager) apiGetCurrentDeployments(w http.ResponseWriter, r *http.Req
 		return
 	}
 
-	// if no Long Poll Index
-	if headerLSN == "" {
-		headerLSN = "0.0.0"
-	}
-
 	// if no filter, check for long polling
 	cmpRes, apidLSN, err := a.compareLSN(headerLSN)
 	switch {
 	case err != nil:
-		if err == ErrNoLSN { // apid hasn't got any LSN from Change Server
-			// This may happen during apid bootstrap
-			a.waitForNewCL(w, time.Duration(timeout))
+		if err == ErrInvalidLSN {
+			a.writeError(w, http.StatusBadRequest, http.StatusBadRequest, err.Error())
+			return
 		}
 		log.Errorf("Error in compareLSN: %v", err)
 		a.writeInternalError(w, err.Error())
@@ -290,6 +289,7 @@ func (a *apiManager) waitForNewCL(w http.ResponseWriter, timeout time.Duration) 
 			a.writeInternalError(w, "Wrong LSN type")
 			return
 		}
+		//TODO: read db only once for all subscribers
 		a.sendReadyDeployments("", w, lsn)
 	case <-time.After(timeout * time.Second):
 		log.Debug("long-polling configuration request timed out.")
@@ -352,25 +352,23 @@ func (a *apiManager) sendDeployments(w http.ResponseWriter, dataDeps []Configura
 }
 
 func (a *apiManager) compareLSN(headerLSN string) (res int, apidLSN string, err error) {
-	apidLSN, err = a.dbMan.getLastSequence()
+	apidLSN = a.dbMan.getLSN()
 	log.Debugf("apidLSN: %v", apidLSN)
-	if err != nil {
-		log.Errorf("Error when getLastSequence: %v", err)
-		return 0, "", err
+
+	// if no Long Poll Index
+	if headerLSN == "" {
+		return 1, apidLSN, nil
 	}
-	if apidLSN == "" {
-		log.Errorf("Error when getLastSequence: %v", ErrNoLSN)
-		return 0, "", ErrNoLSN
+
+	headerSeq, err := common.ParseSequence(headerLSN)
+	if err != nil {
+		log.Debugf("Error when Parse headerLSN Sequence: %v", err)
+		return 0, "", ErrInvalidLSN
 	}
 
 	apidSeq, err := common.ParseSequence(apidLSN)
 	if err != nil {
 		log.Errorf("Error when Parse apidLSN Sequence: %v", err)
-		return 0, "", err
-	}
-	headerSeq, err := common.ParseSequence(headerLSN)
-	if err != nil {
-		log.Errorf("Error when Parse headerLSN Sequence: %v", err)
 		return 0, "", err
 	}
 

@@ -31,12 +31,18 @@ var _ = Describe("listener", func() {
 	var dummyApiMan *dummyApiManager
 	var dummyBundleMan *dummyBundleManager
 	var testHandler *apigeeSyncHandler
+	var testCount int
 	var _ = BeforeEach(func() {
+		testCount += 1
 		// stop handler created by initPlugin()
 		eventHandler.stopListener(services)
 
-		dummyApiMan = &dummyApiManager{}
-		dummyDbMan = &dummyDbManager{}
+		dummyApiMan = &dummyApiManager{
+			lsnChan: make(chan string, 1),
+		}
+		dummyDbMan = &dummyDbManager{
+			lsn: "0.0.1",
+		}
 		dummyBundleMan = &dummyBundleManager{
 			requestChan: make(chan *DownloadRequest),
 			depChan:     make(chan *Configuration),
@@ -72,7 +78,7 @@ var _ = Describe("listener", func() {
 				SnapshotInfo: fmt.Sprint(rand.Uint32()),
 			}
 
-			apid.Events().Emit(APIGEE_SYNC_EVENT, snapshot)
+			<-apid.Events().Emit(APIGEE_SYNC_EVENT, snapshot)
 
 			for i := 0; i < len(unreadyBlobIds); i++ {
 				req := <-dummyBundleMan.requestChan
@@ -124,7 +130,7 @@ var _ = Describe("listener", func() {
 				Changes: changes,
 			}
 
-			apid.Events().Emit(APIGEE_SYNC_EVENT, changeList)
+			<-apid.Events().Emit(APIGEE_SYNC_EVENT, changeList)
 
 			// verify
 			for i := 0; i < len(changes); i++ {
@@ -154,7 +160,7 @@ var _ = Describe("listener", func() {
 				Changes: changes,
 			}
 
-			apid.Events().Emit(APIGEE_SYNC_EVENT, changeList)
+			<-apid.Events().Emit(APIGEE_SYNC_EVENT, changeList)
 
 			// verify
 			for i := 0; i < len(changes); i++ {
@@ -198,7 +204,7 @@ var _ = Describe("listener", func() {
 				LastSequence: testLSN,
 			}
 
-			apid.Events().Emit(APIGEE_SYNC_EVENT, changeList)
+			<-apid.Events().Emit(APIGEE_SYNC_EVENT, changeList)
 
 			// verify
 			for i := 0; i < len(configsNew); i++ {
@@ -213,7 +219,78 @@ var _ = Describe("listener", func() {
 			}
 
 		})
+	})
 
+	Context("LSN", func() {
+		It("changelist with CONFIG_METADATA_TABLE should update apidLSN", func() {
+			// emit change event
+			changes := make([]common.Change, 0)
+			deployments := make(map[string]Configuration)
+			testLSN := fmt.Sprintf("%d.%d.%d", testCount, testCount, testCount)
+			for i := 0; i < 1+rand.Intn(10); i++ {
+				dep := makeTestDeployment()
+				change := common.Change{
+					Operation: common.Insert,
+					Table:     CONFIG_METADATA_TABLE,
+					NewRow:    rowFromDeployment(dep),
+				}
+				changes = append(changes, change)
+				deployments[dep.ID] = *dep
+			}
+
+			changeList := &common.ChangeList{
+				Changes:      changes,
+				LastSequence: testLSN,
+			}
+
+			<-apid.Events().Emit(APIGEE_SYNC_EVENT, changeList)
+			for i := 0; i < len(changes); i++ {
+				<-dummyBundleMan.depChan
+			}
+			Expect(dummyDbMan.getLSN()).Should(Equal(testLSN))
+
+		})
+
+		It("changelist without CONFIG_METADATA_TABLE shouldn't update apidLSN", func() {
+			testLSN := fmt.Sprintf("%d.%d.%d", testCount, testCount, testCount)
+			dummyDbMan.lsn = testLSN
+			// emit change event
+			changes := make([]common.Change, 0)
+			deployments := make(map[string]Configuration)
+			for i := 0; i < 1+rand.Intn(10); i++ {
+				dep := makeTestDeployment()
+				change := common.Change{
+					Operation: common.Insert,
+					Table:     "somewhat-table",
+					NewRow:    rowFromDeployment(dep),
+				}
+				changes = append(changes, change)
+				deployments[dep.ID] = *dep
+			}
+
+			changeList := &common.ChangeList{
+				Changes:      changes,
+				LastSequence: "aaa.aaa.aaa",
+			}
+
+			<-apid.Events().Emit(APIGEE_SYNC_EVENT, changeList)
+			Expect(dummyDbMan.getLSN()).Should(Equal(testLSN))
+
+		})
+
+		It("changelist should always update apidLSN if it has init value", func() {
+			testLSN := fmt.Sprintf("%d.%d.%d", testCount, testCount, testCount)
+			dummyDbMan.lsn = InitLSN
+			// emit change event
+			changeList := &common.ChangeList{
+				Changes:      nil,
+				LastSequence: testLSN,
+			}
+
+			<-apid.Events().Emit(APIGEE_SYNC_EVENT, changeList)
+			Expect(dummyDbMan.getLSN()).Should(Equal(testLSN))
+
+		})
 	})
 })
 
@@ -230,10 +307,11 @@ func (bm *dummyBundleManager) initializeBundleDownloading() {
 
 func (bm *dummyBundleManager) downloadBlobsForChangeList(configs []*Configuration, LSN string) {
 	bm.LSN = LSN
-	for _, conf := range configs {
-		bm.depChan <- conf
-	}
-
+	go func() {
+		for _, conf := range configs {
+			bm.depChan <- conf
+		}
+	}()
 }
 
 func (bm *dummyBundleManager) enqueueRequest(req *DownloadRequest) {

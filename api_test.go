@@ -43,7 +43,7 @@ var _ = Describe("api", func() {
 	var _ = BeforeEach(func() {
 		testCount += 1
 		dummyDbMan = &dummyDbManager{
-			lsn: "19.1d3e9368.0",
+			lsn: "0.1.1",
 		}
 		testApiMan = &apiManager{
 			dbMan:                dummyDbMan,
@@ -122,7 +122,10 @@ var _ = Describe("api", func() {
 			uri, err := url.Parse(apiTestUrl)
 			Expect(err).Should(Succeed())
 			uri.Path = deploymentsEndpoint + strconv.Itoa(testCount)
-			uri.RawQuery = "type=" + typeFilter
+
+			query := uri.Query()
+			query.Add("type", typeFilter)
+			uri.RawQuery = query.Encode()
 			// set test data
 			dep := makeTestDeployment()
 
@@ -150,6 +153,45 @@ var _ = Describe("api", func() {
 
 		})
 
+		It("should not long poll if using filter", func() {
+			typeFilter := "ORGANIZATION"
+			// setup http client
+			uri, err := url.Parse(apiTestUrl)
+			Expect(err).Should(Succeed())
+			uri.Path = deploymentsEndpoint + strconv.Itoa(testCount)
+
+			query := uri.Query()
+			query.Add("type", typeFilter)
+			query.Add("block", "3")
+			query.Add(apidConfigIndexPar, dummyDbMan.lsn)
+			uri.RawQuery = query.Encode()
+			// set test data
+			dep := makeTestDeployment()
+
+			dummyDbMan.configurations = make(map[string]*Configuration)
+			dummyDbMan.configurations[typeFilter] = dep
+			detail := makeExpectedDetail(dep, strings.Split(uri.String(), "?")[0])
+
+			// http get
+			res, err := http.Get(uri.String())
+			Expect(err).Should(Succeed())
+			defer res.Body.Close()
+			Expect(res.StatusCode).Should(Equal(http.StatusOK))
+
+			// parse response
+			var depRes ApiDeploymentResponse
+			body, err := ioutil.ReadAll(res.Body)
+			Expect(err).Should(Succeed())
+			err = json.Unmarshal(body, &depRes)
+			Expect(err).Should(Succeed())
+
+			// verify response
+			Expect(depRes.Kind).Should(Equal(kindCollection))
+			Expect(depRes.Self).Should(Equal(strings.Split(uri.String(), "?")[0] + "?type=" + typeFilter))
+			Expect(depRes.ApiDeploymentsResponse).Should(Equal([]ApiDeploymentDetails{*detail}))
+
+		}, 1)
+
 		It("should get 304 for no change", func() {
 
 			// setup http client
@@ -164,11 +206,13 @@ var _ = Describe("api", func() {
 			Expect(err).Should(Succeed())
 			defer res.Body.Close()
 			Expect(res.StatusCode).Should(Equal(http.StatusOK))
-			lsn := res.Header.Get("x-apid-config-index")
+			lsn := res.Header.Get(apidConfigIndexHeader)
 			Expect(lsn).ShouldNot(BeEmpty())
 
 			// send second request
-			uri.RawQuery = "apid-config-index=" + lsn
+			query := uri.Query()
+			query.Add(apidConfigIndexPar, lsn)
+			uri.RawQuery = query.Encode()
 			log.Debug(uri.String())
 			req, err := http.NewRequest("GET", uri.String(), nil)
 			req.Header.Add("Content-Type", "application/json")
@@ -181,7 +225,7 @@ var _ = Describe("api", func() {
 		})
 
 		// block is not enabled now
-		XIt("should get empty set after blocking if no deployments", func() {
+		It("should do long-polling if Gateway_LSN>=APID_LSN, should get 304 for timeout", func() {
 
 			start := time.Now()
 
@@ -191,18 +235,47 @@ var _ = Describe("api", func() {
 			uri.Path = deploymentsEndpoint + strconv.Itoa(testCount)
 			query := uri.Query()
 			query.Add("block", "1")
+			query.Add(apidConfigIndexPar, "1.0.0")
 			uri.RawQuery = query.Encode()
 
 			// http get
 			res, err := http.Get(uri.String())
 			Expect(err).Should(Succeed())
 			defer res.Body.Close()
-			Expect(res.StatusCode).Should(Equal(http.StatusOK))
+			Expect(res.StatusCode).Should(Equal(http.StatusNotModified))
 
 			//verify blocking time
 			blockingTime := time.Since(start)
-			log.Warnf("time used: %v", blockingTime.Seconds())
 			Expect(blockingTime.Seconds() > 0.9).Should(BeTrue())
+
+		}, 2)
+
+		It("should do long-polling if Gateway_LSN>=APID_LSN, should get 200 if not timeout", func() {
+
+			testLSN := fmt.Sprintf("%d.%d.%d", testCount, testCount, testCount)
+			// setup http client
+			uri, err := url.Parse(apiTestUrl)
+			Expect(err).Should(Succeed())
+			uri.Path = deploymentsEndpoint + strconv.Itoa(testCount)
+			query := uri.Query()
+			query.Add("block", "2")
+			query.Add(apidConfigIndexPar, dummyDbMan.lsn)
+			uri.RawQuery = query.Encode()
+
+			// set test data
+			details := setTestDeployments(dummyDbMan, strings.Split(uri.String(), "?")[0])
+
+			// notify change
+			go func() {
+				time.Sleep(time.Second)
+				testApiMan.notifyNewChangeList(testLSN)
+			}()
+
+			// http get
+			res, err := http.Get(uri.String())
+			Expect(err).Should(Succeed())
+			defer res.Body.Close()
+			Expect(res.StatusCode).Should(Equal(http.StatusOK))
 
 			// parse response
 			var depRes ApiDeploymentResponse
@@ -212,11 +285,50 @@ var _ = Describe("api", func() {
 			Expect(err).Should(Succeed())
 
 			// verify response
-			Expect(len(depRes.ApiDeploymentsResponse)).To(Equal(0))
 			Expect(depRes.Kind).Should(Equal(kindCollection))
-			Expect(depRes.Self).Should(Equal(apiTestUrl + deploymentsEndpoint + strconv.Itoa(testCount)))
+			Expect(depRes.Self).Should(Equal(strings.Split(uri.String(), "?")[0]))
+			Expect(depRes.ApiDeploymentsResponse).Should(Equal(details))
+		}, 3)
 
-		}, 2)
+		It("should support long-polling for multiple subscribers", func() {
+
+			testLSN := fmt.Sprintf("%d.%d.%d", testCount, testCount, testCount)
+			// setup http client
+			uri, err := url.Parse(apiTestUrl)
+			Expect(err).Should(Succeed())
+			uri.Path = deploymentsEndpoint + strconv.Itoa(testCount)
+			query := uri.Query()
+			query.Add("block", "3")
+			query.Add(apidConfigIndexPar, dummyDbMan.lsn)
+			uri.RawQuery = query.Encode()
+
+			// set test data
+			setTestDeployments(dummyDbMan, strings.Split(uri.String(), "?")[0])
+
+			// http get
+			count := mathrand.Intn(20) + 5
+			finishChan := make(chan int)
+			for i := 0; i < count; i++ {
+				go func() {
+					defer GinkgoRecover()
+					res, err := http.Get(uri.String())
+					Expect(err).Should(Succeed())
+					defer res.Body.Close()
+					finishChan <- res.StatusCode
+				}()
+			}
+
+			// notify change
+			go func() {
+				time.Sleep(1500 * time.Millisecond)
+				testApiMan.notifyNewChangeList(testLSN)
+			}()
+
+			for i := 0; i < count; i++ {
+				Expect(<-finishChan).Should(Equal(http.StatusOK))
+			}
+
+		}, 5)
 
 		It("should get iso8601 time", func() {
 			testTimes := []string{"", "2017-04-05 04:47:36.462 +0000 UTC", "2017-04-05 04:47:36.462-07:00", "2017-04-05T04:47:36.462Z", "2017-04-05 23:23:38.162+00:00", "2017-06-22 16:41:02.334"}
@@ -467,7 +579,10 @@ func (d *dummyDbManager) updateLocalFsLocation(blobId, localFsLocation string) e
 	if err != nil {
 		return err
 	}
-	d.fileResponse <- string(buff)
+	go func(buff []byte) {
+		d.fileResponse <- string(buff)
+	}(buff)
+
 	return nil
 }
 
@@ -478,6 +593,16 @@ func (d *dummyDbManager) getLocalFSLocation(string) (string, error) {
 func (d *dummyDbManager) getConfigById(id string) (*Configuration, error) {
 	return d.configurations[id], d.err
 }
-func (d *dummyDbManager) getLastSequence() (string, error) {
-	return d.lsn, nil
+func (d *dummyDbManager) getLSN() string {
+	return d.lsn
+}
+
+func (d *dummyDbManager) updateLSN(LSN string) error {
+	d.lsn = LSN
+	return nil
+}
+
+func (d *dummyDbManager) loadLsnFromDb() error {
+
+	return nil
 }

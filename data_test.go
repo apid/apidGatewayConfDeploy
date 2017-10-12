@@ -15,6 +15,8 @@
 package apiGatewayConfDeploy
 
 import (
+	"database/sql"
+	"fmt"
 	"github.com/apid/apid-core"
 	"github.com/apid/apid-core/data"
 	. "github.com/onsi/ginkgo"
@@ -44,8 +46,9 @@ var _ = Describe("data", func() {
 	var _ = BeforeEach(func() {
 		testCount += 1
 		testDbMan = &dbManager{
-			data:  services.Data(),
-			dbMux: sync.RWMutex{},
+			data:     services.Data(),
+			dbMux:    sync.RWMutex{},
+			lsnMutex: sync.RWMutex{},
 		}
 		testDbMan.setDbVersion("test" + strconv.Itoa(testCount))
 		initTestDb(testDbMan.getDb())
@@ -59,7 +62,7 @@ var _ = Describe("data", func() {
 		data.Delete(data.VersionedDBID("common", "test"+strconv.Itoa(testCount)))
 	})
 
-	Context("db tests", func() {
+	Context("basic db tests", func() {
 		It("initDb() should be idempotent", func() {
 			err := testDbMan.initDb()
 			Expect(err).Should(Succeed())
@@ -90,6 +93,53 @@ var _ = Describe("data", func() {
 			Expect(count).Should(Equal(6))
 		})
 
+		It("should initialize support for long-polling", func() {
+			// APID_CONFIGURATION_LSN
+			rows, err := testDbMan.getDb().Query(`
+				SELECT lsn from APID_CONFIGURATION_LSN;
+			`)
+			Expect(err).Should(Succeed())
+			defer rows.Close()
+			count := 0
+			var lsn sql.NullString
+			for rows.Next() {
+				count++
+				rows.Scan(&lsn)
+			}
+			Expect(count).Should(Equal(1))
+			Expect(lsn.Valid).Should(BeTrue())
+			Expect(lsn.String).Should(Equal(InitLSN))
+		})
+
+		It("should maintain LSN", func() {
+			testLSN := fmt.Sprintf("%d.%d.%d", testCount, testCount, testCount)
+			// write
+			err := testDbMan.updateLSN(testLSN)
+			Expect(err).Should(Succeed())
+			rows, err := testDbMan.getDb().Query(`
+				SELECT lsn from APID_CONFIGURATION_LSN;
+			`)
+			defer rows.Close()
+			count := 0
+			var lsn sql.NullString
+			for rows.Next() {
+				count++
+				rows.Scan(&lsn)
+			}
+			Expect(count).Should(Equal(1))
+			Expect(lsn.Valid).Should(BeTrue())
+			Expect(lsn.String).Should(Equal(testLSN))
+
+			// read
+			Expect(testDbMan.getLSN()).Should(Equal(testLSN))
+
+			//load
+			Expect(testDbMan.loadLsnFromDb()).Should(Succeed())
+			Expect(testDbMan.apidLSN).Should(Equal(testLSN))
+		})
+	})
+
+	Context("configuration tests", func() {
 		It("should get empty slice if no deployments are ready", func() {
 			deps, err := testDbMan.getReadyDeployments("")
 			Expect(err).Should(Succeed())
