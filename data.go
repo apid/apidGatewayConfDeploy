@@ -345,6 +345,7 @@ func (dbc *dbManager) getLocalFSLocation(blobId string) (localFsLocation string,
 }
 
 func (dbc *dbManager) loadLsnFromDb() error {
+	log.Debug("loadLsnFromDb")
 	var LSN sql.NullString
 	ret := InitLSN
 
@@ -356,7 +357,7 @@ func (dbc *dbManager) loadLsnFromDb() error {
 	}
 	if LSN.Valid {
 		ret = LSN.String
-		log.Debugf("LSN from APID_CONFIGURATION_LSN: %s", LSN)
+		log.Debugf("LSN from APID_CONFIGURATION_LSN: %s", LSN.String)
 	}
 	dbc.lsnMutex.Lock()
 	defer dbc.lsnMutex.Unlock()

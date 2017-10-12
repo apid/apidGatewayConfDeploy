@@ -70,22 +70,27 @@ func (h *apigeeSyncHandler) processSnapshot(snapshot *common.Snapshot) {
 	log.Debugf("Snapshot received. Switching to DB version: %s", snapshot.SnapshotInfo)
 
 	h.dbMan.setDbVersion(snapshot.SnapshotInfo)
+	err := h.dbMan.initDb()
+	if err != nil {
+		log.Panicf("unable to init DB: %v", err)
+	}
 
-	h.startupOnExistingDatabase()
 	if lsn := h.dbMan.getLSN(); lsn != "" {
 		h.dbMan.updateLSN(lsn)
 	} else { //apid just started
 		h.dbMan.loadLsnFromDb()
 	}
+	h.startupOnExistingDatabase()
 	h.apiMan.InitAPI()
 	log.Debug("Snapshot processed")
 }
 
 func (h *apigeeSyncHandler) startupOnExistingDatabase() {
 	// start bundle downloads that didn't finish
+
 	go func() {
 		// create apid_blob_available table
-		h.dbMan.initDb()
+
 		blobIds, err := h.dbMan.getUnreadyBlobs()
 
 		if err != nil {
@@ -96,6 +101,7 @@ func (h *apigeeSyncHandler) startupOnExistingDatabase() {
 		for _, id := range blobIds {
 			go h.bundleMan.enqueueRequest(h.bundleMan.makeDownloadRequest(id, nil))
 		}
+
 	}()
 }
 

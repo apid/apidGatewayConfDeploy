@@ -310,7 +310,6 @@ func getSignedURL(client *http.Client, blobServerURL string, blobId string) (str
 func downloadFromURI(client *http.Client, blobServerURL string, blobId string) (tempFileName string, err error) {
 
 	var tempFile *os.File
-	log.Debugf("Downloading Blob: %s", blobId)
 
 	uri, err := getSignedURL(client, blobServerURL, blobId)
 	if err != nil {

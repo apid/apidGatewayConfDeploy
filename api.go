@@ -66,6 +66,7 @@ const (
 
 const (
 	headerSteam           = "application/octet-stream"
+	headerJson            = "application/json"
 	apidConfigIndexPar    = "apid-config-index"
 	apidConfigIndexHeader = "x-apid-config-index"
 )
@@ -343,11 +344,11 @@ func (a *apiManager) sendDeployments(w http.ResponseWriter, dataDeps []Configura
 		return
 	}
 
-	log.Debugf("sending deployments %s: %s", apidLSN, b)
 	if apidLSN != "" {
 		w.Header().Set(apidConfigIndexHeader, apidLSN)
 	}
-
+	w.Header().Set("Content-Type", headerJson)
+	log.Debugf("sending deployments %s: %s", apidLSN, b)
 	w.Write(b)
 }
 
