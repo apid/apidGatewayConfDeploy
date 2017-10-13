@@ -19,6 +19,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/apid/apid-core/util"
 	"github.com/apigee-labs/transicator/common"
 	"github.com/gorilla/mux"
 	"io"
@@ -40,10 +41,10 @@ const (
 )
 
 const (
-	deploymentsEndpoint  = "/configurations"
-	blobEndpointPath     = "/blobs"
-	blobEndpoint         = blobEndpointPath + "/{blobId}"
-	deploymentIdEndpoint = deploymentsEndpoint + "/{configId}"
+	configEndpoint   = "/configurations"
+	blobEndpointPath = "/blobs"
+	blobEndpoint     = blobEndpointPath + "/{blobId}"
+	configIdEndpoint = configEndpoint + "/{configId}"
 )
 
 const (
@@ -87,7 +88,7 @@ type errorResponse struct {
 	Reason    string `json:"reason"`
 }
 
-type ApiDeploymentDetails struct {
+type ApiConfigurationDetails struct {
 	Self            string `json:"self"`
 	Name            string `json:"name"`
 	Type            string `json:"type"`
@@ -101,10 +102,10 @@ type ApiDeploymentDetails struct {
 	Updated         string `json:"updated"`
 }
 
-type ApiDeploymentResponse struct {
-	Kind                   string                 `json:"kind"`
-	Self                   string                 `json:"self"`
-	ApiDeploymentsResponse []ApiDeploymentDetails `json:"contents"`
+type ApiConfigurationResponse struct {
+	Kind                      string                    `json:"kind"`
+	Self                      string                    `json:"self"`
+	ApiConfigurationsResponse []ApiConfigurationDetails `json:"contents"`
 }
 
 type confChangeNotification struct {
@@ -119,35 +120,35 @@ type apiManagerInterface interface {
 }
 
 type apiManager struct {
-	dbMan                dbManagerInterface
-	deploymentsEndpoint  string
-	blobEndpoint         string
-	deploymentIdEndpoint string
-	addSubscriber        chan chan interface{}
-	newChangeListChan    chan interface{}
-	apiInitialized       bool
+	dbMan                   dbManagerInterface
+	configurationEndpoint   string
+	blobEndpoint            string
+	configurationIdEndpoint string
+	addSubscriber           chan chan interface{}
+	newChangeListChan       chan interface{}
+	apiInitialized          bool
 }
 
 func (a *apiManager) InitAPI() {
 	if a.apiInitialized {
 		return
 	}
-	services.API().HandleFunc(a.deploymentsEndpoint, a.apiGetCurrentConfigs).Methods("GET")
+	services.API().HandleFunc(a.configurationEndpoint, a.apiGetCurrentConfigs).Methods("GET")
 	services.API().HandleFunc(a.blobEndpoint, a.apiReturnBlobData).Methods("GET")
-	services.API().HandleFunc(a.deploymentIdEndpoint, a.apiHandleConfigId).Methods("GET")
+	services.API().HandleFunc(a.configurationIdEndpoint, a.apiHandleConfigId).Methods("GET")
 	a.initDistributeEvents()
 	a.apiInitialized = true
 	log.Debug("API endpoints initialized")
 }
 
 func (a *apiManager) initDistributeEvents() {
-	go distributeEvents(a.newChangeListChan, a.addSubscriber)
+	go util.DistributeEvents(a.newChangeListChan, a.addSubscriber)
 }
 
 func (a *apiManager) notifyNewChangeList(newLSN string) {
-	confs, err := a.dbMan.getReadyDeployments("")
+	confs, err := a.dbMan.getReadyConfigurations("")
 	if err != nil {
-		log.Errorf("Database error in getReadyDeployments: %v", err)
+		log.Errorf("Database error in getReadyConfigurations: %v", err)
 	}
 	a.newChangeListChan <- &confChangeNotification{
 		LSN:   newLSN,
@@ -210,8 +211,8 @@ func (a *apiManager) apiHandleConfigId(w http.ResponseWriter, r *http.Request) {
 		}
 		return
 	}
-	configDetail := ApiDeploymentDetails{
-		Self:            getHttpHost() + a.deploymentsEndpoint + "/" + config.ID,
+	configDetail := ApiConfigurationDetails{
+		Self:            getHttpHost() + a.configurationEndpoint + "/" + config.ID,
 		Name:            config.Name,
 		Type:            config.Type,
 		Revision:        config.Revision,
@@ -231,17 +232,16 @@ func (a *apiManager) apiHandleConfigId(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	log.Debugf("sending configuration %s", b)
+	w.Header().Set("Content-Type", headerJson)
 	w.Write(b)
 }
 
+// If not long-polling, return configurations, status = 200
+// If "apid-config-index" is given in request parameters, return immediately with status = 200/304
+// If both "block" and "apid-config-index" are given:
+// if apid's LSN > apid-config-index in header, return immediately with status = 200
+// if apid's LSN <= apid-config-index, long polling for timeout=block secs
 func (a *apiManager) apiGetCurrentConfigs(w http.ResponseWriter, r *http.Request) {
-
-	// If returning without a bundle (immediately or after timeout), status = 404
-	// If returning If-None-Match value is equal to current deployment, status = 304
-	// If returning a new value, status = 200
-
-	// If timeout > 0 AND there is no deployment (or new deployment) available (per If-None-Match), then
-	// block for up to the specified number of seconds until a new deployment becomes available.
 	blockSec := r.URL.Query().Get("block")
 	typeFilter := r.URL.Query().Get("type")
 	headerLSN := r.URL.Query().Get(apidConfigIndexPar)
@@ -260,7 +260,7 @@ func (a *apiManager) apiGetCurrentConfigs(w http.ResponseWriter, r *http.Request
 
 	// if filter by "type"
 	if typeFilter != "" {
-		a.sendReadyDeployments(typeFilter, w, "")
+		a.sendReadyConfigurations(typeFilter, w, "")
 		return
 	}
 
@@ -279,58 +279,52 @@ func (a *apiManager) apiGetCurrentConfigs(w http.ResponseWriter, r *http.Request
 		if timeout == 0 { // no long polling
 			w.WriteHeader(http.StatusNotModified)
 		} else { // long polling
-			a.waitForNewCL(w, time.Duration(timeout))
+			util.LongPolling(w, time.Duration(timeout)*time.Second, a.addSubscriber, a.LongPollSuccessHandler, a.LongPollTimeoutHandler)
 		}
 		return
 	case cmpRes > 0: //APID_LSN > Header_LSN
-		a.sendReadyDeployments("", w, apidLSN)
+		a.sendReadyConfigurations("", w, apidLSN)
 		return
 	}
 }
 
-func (a *apiManager) waitForNewCL(w http.ResponseWriter, timeout time.Duration) {
-	ConfigChangeChan := make(chan interface{}, 1)
-	a.addSubscriber <- ConfigChangeChan
-
-	log.Debug("Long-polling... Waiting for new Deployments.")
-
-	select {
-	case c := <-ConfigChangeChan:
-		// send configs and LSN
-		confChange, ok := c.(*confChangeNotification)
-		if !ok || confChange.err != nil {
-			log.Errorf("Wrong confChangeNotification: %v, %v", ok, confChange)
-			a.writeInternalError(w, "Error getting configurations with long-polling")
-			return
-		}
-		a.sendDeployments(w, confChange.confs, confChange.LSN, "")
-	case <-time.After(timeout * time.Second):
-		log.Debug("long-polling configuration request timed out.")
-		w.WriteHeader(http.StatusNotModified)
+func (a *apiManager) LongPollSuccessHandler(c interface{}, w http.ResponseWriter) {
+	// send configs and LSN
+	confChange, ok := c.(*confChangeNotification)
+	if !ok || confChange.err != nil {
+		log.Errorf("Wrong confChangeNotification: %v, %v", ok, confChange)
+		a.writeInternalError(w, "Error getting configurations with long-polling")
+		return
 	}
+	a.sendDeployments(w, confChange.confs, confChange.LSN, "")
 }
 
-func (a *apiManager) sendReadyDeployments(typeFilter string, w http.ResponseWriter, apidLSN string) {
-	deployments, err := a.dbMan.getReadyDeployments(typeFilter)
+func (a *apiManager) LongPollTimeoutHandler(w http.ResponseWriter) {
+	log.Debug("long-polling configuration request timed out.")
+	w.WriteHeader(http.StatusNotModified)
+}
+
+func (a *apiManager) sendReadyConfigurations(typeFilter string, w http.ResponseWriter, apidLSN string) {
+	configurations, err := a.dbMan.getReadyConfigurations(typeFilter)
 	if err != nil {
 		log.Errorf("Database error: %v", err)
 		a.writeInternalError(w, fmt.Sprintf("Database error: %s", err.Error()))
 		return
 	}
-	a.sendDeployments(w, deployments, apidLSN, typeFilter)
+	a.sendDeployments(w, configurations, apidLSN, typeFilter)
 }
 
-func (a *apiManager) sendDeployments(w http.ResponseWriter, dataDeps []Configuration, apidLSN string, typeFilter string) {
+func (a *apiManager) sendDeployments(w http.ResponseWriter, dataConfs []Configuration, apidLSN string, typeFilter string) {
 
-	apiDeps := ApiDeploymentResponse{}
-	apiDepDetails := make([]ApiDeploymentDetails, 0)
+	apiConfs := ApiConfigurationResponse{}
+	apiConfDetails := make([]ApiConfigurationDetails, 0)
 
-	apiDeps.Kind = kindCollection
-	apiDeps.Self = getHttpHost() + a.deploymentsEndpoint
+	apiConfs.Kind = kindCollection
+	apiConfs.Self = getHttpHost() + a.configurationEndpoint
 
-	for _, d := range dataDeps {
-		apiDepDetails = append(apiDepDetails, ApiDeploymentDetails{
-			Self:            apiDeps.Self + "/" + d.ID,
+	for _, d := range dataConfs {
+		apiConfDetails = append(apiConfDetails, ApiConfigurationDetails{
+			Self:            apiConfs.Self + "/" + d.ID,
 			Name:            d.Name,
 			Type:            d.Type,
 			Revision:        d.Revision,
@@ -343,13 +337,13 @@ func (a *apiManager) sendDeployments(w http.ResponseWriter, dataDeps []Configura
 			Updated:         convertTime(d.Updated),
 		})
 	}
-	apiDeps.ApiDeploymentsResponse = apiDepDetails
+	apiConfs.ApiConfigurationsResponse = apiConfDetails
 
 	if typeFilter != "" {
-		apiDeps.Self += "?type=" + typeFilter
+		apiConfs.Self += "?type=" + typeFilter
 	}
 
-	b, err := json.Marshal(apiDeps)
+	b, err := json.Marshal(apiConfs)
 	if err != nil {
 		log.Errorf("unable to marshal deployments: %v", err)
 		w.WriteHeader(http.StatusInternalServerError)
@@ -360,7 +354,7 @@ func (a *apiManager) sendDeployments(w http.ResponseWriter, dataDeps []Configura
 		w.Header().Set(apidConfigIndexHeader, apidLSN)
 	}
 	w.Header().Set("Content-Type", headerJson)
-	log.Debugf("sending deployments %s: %s", apidLSN, b)
+	log.Debugf("sending deployments %s", apidLSN)
 	w.Write(b)
 }
 

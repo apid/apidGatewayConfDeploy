@@ -133,13 +133,13 @@ func initPlugin(s apid.Services) (apid.PluginData, error) {
 	// initialize api manager
 
 	apiMan := &apiManager{
-		dbMan:                dbMan,
-		deploymentsEndpoint:  deploymentsEndpoint,
-		blobEndpoint:         blobEndpoint,
-		deploymentIdEndpoint: deploymentIdEndpoint,
-		newChangeListChan:    make(chan interface{}, 5),
-		addSubscriber:        make(chan chan interface{}, 100),
-		apiInitialized:       false,
+		dbMan: dbMan,
+		configurationEndpoint:   configEndpoint,
+		blobEndpoint:            blobEndpoint,
+		configurationIdEndpoint: configIdEndpoint,
+		newChangeListChan:       make(chan interface{}, 5),
+		addSubscriber:           make(chan chan interface{}, 100),
+		apiInitialized:          false,
 	}
 
 	// initialize bundle manager
@@ -155,16 +155,16 @@ func initPlugin(s apid.Services) (apid.PluginData, error) {
 	concurrentDownloads := config.GetInt(configConcurrentDownloads)
 	downloadQueueSize := config.GetInt(configDownloadQueueSize)
 	bundleMan := &bundleManager{
-		blobServerUrl:             blobServerURL,
-		dbMan:                     dbMan,
-		apiMan:                    apiMan,
-		concurrentDownloads:       concurrentDownloads,
-		markDeploymentFailedAfter: markDeploymentFailedAfter,
-		bundleRetryDelay:          time.Second,
-		bundleCleanupDelay:        bundleCleanupDelay,
-		downloadQueue:             make(chan *DownloadRequest, downloadQueueSize),
-		isClosed:                  new(int32),
-		client:                    httpClient,
+		blobServerUrl:         blobServerURL,
+		dbMan:                 dbMan,
+		apiMan:                apiMan,
+		concurrentDownloads:   concurrentDownloads,
+		markConfigFailedAfter: markDeploymentFailedAfter,
+		bundleRetryDelay:      time.Second,
+		bundleCleanupDelay:    bundleCleanupDelay,
+		downloadQueue:         make(chan *DownloadRequest, downloadQueueSize),
+		isClosed:              new(int32),
+		client:                httpClient,
 	}
 
 	bundleMan.initializeBundleDownloading()

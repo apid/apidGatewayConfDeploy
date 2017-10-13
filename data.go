@@ -53,7 +53,7 @@ type dbManagerInterface interface {
 	setDbVersion(string)
 	initDb() error
 	getUnreadyBlobs() ([]string, error)
-	getReadyDeployments(typeFilter string) ([]Configuration, error)
+	getReadyConfigurations(typeFilter string) ([]Configuration, error)
 	updateLocalFsLocation(string, string) error
 	getLocalFSLocation(string) (string, error)
 	getConfigById(string) (*Configuration, error)
@@ -145,14 +145,13 @@ func (dbc *dbManager) getConfigById(id string) (config *Configuration, err error
 		FROM METADATA_RUNTIME_ENTITY_METADATA as a
 		WHERE a.id = ?;
 	`, id)
-	config, err = dataDeploymentsFromRow(row)
+	config, err = configurationFromDbRow(row)
 	if err != nil {
 		return nil, err
 	}
 	return config, nil
 }
 
-// getUnreadyDeployments() returns array of resources that are not yet to be processed
 func (dbc *dbManager) getUnreadyBlobs() (ids []string, err error) {
 
 	rows, err := dbc.getDb().Query(`
@@ -188,7 +187,7 @@ func (dbc *dbManager) getUnreadyBlobs() (ids []string, err error) {
 	return
 }
 
-func (dbc *dbManager) getReadyDeployments(typeFilter string) ([]Configuration, error) {
+func (dbc *dbManager) getReadyConfigurations(typeFilter string) ([]Configuration, error) {
 
 	// An alternative statement is in get_ready_deployments.sql
 	// Need testing with large data volume to determine which is better
@@ -286,14 +285,14 @@ func (dbc *dbManager) getReadyDeployments(typeFilter string) ([]Configuration, e
 	}
 	defer rows.Close()
 
-	deployments, err := dataDeploymentsFromRows(rows)
+	confs, err := configurationsFromDbRows(rows)
 	if err != nil {
 		return nil, err
 	}
 
-	log.Debugf("Configurations ready: %v", deployments)
+	//log.Debugf("Configurations ready: %v", confs)
 
-	return deployments, nil
+	return confs, nil
 
 }
 
@@ -345,7 +344,6 @@ func (dbc *dbManager) getLocalFSLocation(blobId string) (localFsLocation string,
 }
 
 func (dbc *dbManager) loadLsnFromDb() error {
-	log.Debug("loadLsnFromDb")
 	var LSN sql.NullString
 	ret := InitLSN
 
@@ -395,7 +393,7 @@ func (dbc *dbManager) updateLSN(LSN string) (err error) {
 	return
 }
 
-func dataDeploymentsFromRows(rows *sql.Rows) ([]Configuration, error) {
+func configurationsFromDbRows(rows *sql.Rows) ([]Configuration, error) {
 	tmp, err := structFromRows(reflect.TypeOf((*Configuration)(nil)).Elem(), rows)
 	if err != nil {
 		return nil, err
@@ -427,11 +425,11 @@ func structFromRows(t reflect.Type, rows *sql.Rows) (interface{}, error) {
 	return slice.Interface(), nil
 }
 
-func dataDeploymentsFromRow(row *sql.Row) (*Configuration, error) {
+func configurationFromDbRow(row *sql.Row) (*Configuration, error) {
 	tmp, err := structFromRow(reflect.TypeOf((*Configuration)(nil)).Elem(), row)
 	if err != nil {
 		if err != sql.ErrNoRows {
-			log.Errorf("Error in dataDeploymentsFromRow: %v", err)
+			log.Errorf("Error in configurationFromDbRow: %v", err)
 		}
 		return nil, err
 	}

@@ -140,10 +140,10 @@ var _ = Describe("data", func() {
 	})
 
 	Context("configuration tests", func() {
-		It("should get empty slice if no deployments are ready", func() {
-			deps, err := testDbMan.getReadyDeployments("")
+		It("should get empty slice if no configurations are ready", func() {
+			confs, err := testDbMan.getReadyConfigurations("")
 			Expect(err).Should(Succeed())
-			Expect(len(deps)).Should(BeZero())
+			Expect(len(confs)).Should(BeZero())
 		})
 
 		It("should succefully update local FS location", func() {
@@ -208,13 +208,13 @@ var _ = Describe("data", func() {
 			err = testDbMan.updateLocalFsLocation(readyResourceId, testBlobLocalFsPrefix+readyResourceId)
 			Expect(err).Should(Succeed())
 
-			deps, err := testDbMan.getReadyDeployments("")
+			confs, err := testDbMan.getReadyConfigurations("")
 			Expect(err).Should(Succeed())
-			Expect(len(deps)).Should(Equal(2))
-			for _, dep := range deps {
-				Expect(dep.BlobID).Should(Equal(readyBlobId))
-				if dep.BlobResourceID != "" {
-					Expect(dep.BlobResourceID).Should(Equal(readyResourceId))
+			Expect(len(confs)).Should(Equal(2))
+			for _, conf := range confs {
+				Expect(conf.BlobID).Should(Equal(readyBlobId))
+				if conf.BlobResourceID != "" {
+					Expect(conf.BlobResourceID).Should(Equal(readyResourceId))
 				}
 			}
 		})
@@ -226,19 +226,19 @@ var _ = Describe("data", func() {
 			err = testDbMan.updateLocalFsLocation(readyResourceId, testBlobLocalFsPrefix+readyResourceId)
 			Expect(err).Should(Succeed())
 
-			deps, err := testDbMan.getReadyDeployments("ORGANIZATION")
+			confs, err := testDbMan.getReadyConfigurations("ORGANIZATION")
 			Expect(err).Should(Succeed())
-			Expect(len(deps)).Should(Equal(1))
-			Expect(deps[0].ID).Should(Equal("319963ff-217e-4ecc-8d6e-c3665e962d1e"))
+			Expect(len(confs)).Should(Equal(1))
+			Expect(confs[0].ID).Should(Equal("319963ff-217e-4ecc-8d6e-c3665e962d1e"))
 
-			deps, err = testDbMan.getReadyDeployments("ENVIRONMENT")
+			confs, err = testDbMan.getReadyConfigurations("ENVIRONMENT")
 			Expect(err).Should(Succeed())
-			Expect(len(deps)).Should(Equal(1))
-			Expect(deps[0].ID).Should(Equal("1dc4895e-6494-4b59-979f-5f4c89c073b4"))
+			Expect(len(confs)).Should(Equal(1))
+			Expect(confs[0].ID).Should(Equal("1dc4895e-6494-4b59-979f-5f4c89c073b4"))
 
-			deps, err = testDbMan.getReadyDeployments("INVALID-TYPE")
+			confs, err = testDbMan.getReadyConfigurations("INVALID-TYPE")
 			Expect(err).Should(Succeed())
-			Expect(len(deps)).Should(Equal(0))
+			Expect(len(confs)).Should(Equal(0))
 		})
 
 		It("should succefully get all unready blob ids", func() {

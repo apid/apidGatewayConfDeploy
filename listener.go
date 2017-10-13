@@ -94,7 +94,7 @@ func (h *apigeeSyncHandler) startupOnExistingDatabase() {
 		blobIds, err := h.dbMan.getUnreadyBlobs()
 
 		if err != nil {
-			log.Panicf("unable to query database for unready deployments: %v", err)
+			log.Panicf("unable to query database for unready configurations: %v", err)
 		}
 
 		log.Debugf("Queuing %d blob downloads", len(blobIds))
@@ -117,16 +117,16 @@ func (h *apigeeSyncHandler) processChangeList(changes *common.ChangeList) {
 			isConfigChanged = true
 			switch change.Operation {
 			case common.Insert:
-				dep := dataDeploymentFromRow(change.NewRow)
-				insertedConfigs = append(insertedConfigs, &dep)
+				conf := configurationFromRow(change.NewRow)
+				insertedConfigs = append(insertedConfigs, &conf)
 			case common.Delete:
-				dep := dataDeploymentFromRow(change.OldRow)
-				deletedConfigs = append(deletedConfigs, &dep)
+				conf := configurationFromRow(change.OldRow)
+				deletedConfigs = append(deletedConfigs, &conf)
 			case common.Update:
-				depNew := dataDeploymentFromRow(change.NewRow)
-				depOld := dataDeploymentFromRow(change.OldRow)
-				updatedNewConfigs = append(updatedNewConfigs, &depNew)
-				updatedOldConfigs = append(updatedOldConfigs, &depOld)
+				confNew := configurationFromRow(change.NewRow)
+				confOld := configurationFromRow(change.OldRow)
+				updatedNewConfigs = append(updatedNewConfigs, &confNew)
+				updatedOldConfigs = append(updatedOldConfigs, &confOld)
 			default:
 				log.Errorf("unexpected operation: %s", change.Operation)
 			}
@@ -149,21 +149,21 @@ func (h *apigeeSyncHandler) processChangeList(changes *common.ChangeList) {
 
 }
 
-func dataDeploymentFromRow(row common.Row) (d Configuration) {
+func configurationFromRow(row common.Row) (c Configuration) {
 
-	row.Get("id", &d.ID)
-	row.Get("organization_id", &d.OrgID)
-	row.Get("environment_id", &d.EnvID)
-	row.Get("bean_blob_id", &d.BlobID)
-	row.Get("resource_blob_id", &d.BlobResourceID)
-	row.Get("type", &d.Type)
-	row.Get("name", &d.Name)
-	row.Get("revision", &d.Revision)
-	row.Get("path", &d.Path)
-	row.Get("created_at", &d.Created)
-	row.Get("created_by", &d.CreatedBy)
-	row.Get("updated_at", &d.Updated)
-	row.Get("updated_by", &d.UpdatedBy)
+	row.Get("id", &c.ID)
+	row.Get("organization_id", &c.OrgID)
+	row.Get("environment_id", &c.EnvID)
+	row.Get("bean_blob_id", &c.BlobID)
+	row.Get("resource_blob_id", &c.BlobResourceID)
+	row.Get("type", &c.Type)
+	row.Get("name", &c.Name)
+	row.Get("revision", &c.Revision)
+	row.Get("path", &c.Path)
+	row.Get("created_at", &c.Created)
+	row.Get("created_by", &c.CreatedBy)
+	row.Get("updated_at", &c.Updated)
+	row.Get("updated_by", &c.UpdatedBy)
 
 	return
 }

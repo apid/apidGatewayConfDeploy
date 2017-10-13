@@ -72,15 +72,15 @@ var _ = Describe("api", func() {
 
 		// init bundle manager
 		testBundleMan = &bundleManager{
-			blobServerUrl:             bundleTestUrl,
-			dbMan:                     dummyDbMan,
-			apiMan:                    dummyApiMan,
-			concurrentDownloads:       concurrentDownloads,
-			markDeploymentFailedAfter: 5 * time.Second,
-			bundleRetryDelay:          time.Second,
-			bundleCleanupDelay:        5 * time.Second,
-			downloadQueue:             make(chan *DownloadRequest, downloadQueueSize),
-			isClosed:                  new(int32),
+			blobServerUrl:         bundleTestUrl,
+			dbMan:                 dummyDbMan,
+			apiMan:                dummyApiMan,
+			concurrentDownloads:   concurrentDownloads,
+			markConfigFailedAfter: 5 * time.Second,
+			bundleRetryDelay:      time.Second,
+			bundleCleanupDelay:    5 * time.Second,
+			downloadQueue:         make(chan *DownloadRequest, downloadQueueSize),
+			isClosed:              new(int32),
 			client: &http.Client{
 				Timeout: time.Second,
 				Transport: &http.Transport{
@@ -124,13 +124,13 @@ var _ = Describe("api", func() {
 
 		}, 4)
 
-		It("should mark as failure according to markDeploymentFailedAfter", func() {
+		It("should mark as failure according to markConfigFailedAfter", func() {
 			// setup timeout
 			atomic.StoreInt32(blobServer.signedTimeout, 1)
 			atomic.StoreInt32(blobServer.blobTimeout, 1)
 			testBundleMan.client.Timeout = 100 * time.Millisecond
 			testBundleMan.bundleRetryDelay = 100 * time.Millisecond
-			testBundleMan.markDeploymentFailedAfter = 200 * time.Millisecond
+			testBundleMan.markConfigFailedAfter = 200 * time.Millisecond
 
 			// download blobs
 			id := util.GenerateUUID()

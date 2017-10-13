@@ -44,17 +44,17 @@ type bundleManagerInterface interface {
 }
 
 type bundleManager struct {
-	blobServerUrl             string
-	dbMan                     dbManagerInterface
-	apiMan                    apiManagerInterface
-	concurrentDownloads       int
-	markDeploymentFailedAfter time.Duration
-	bundleRetryDelay          time.Duration
-	bundleCleanupDelay        time.Duration
-	downloadQueue             chan *DownloadRequest
-	isClosed                  *int32
-	workers                   []*BundleDownloader
-	client                    *http.Client
+	blobServerUrl         string
+	dbMan                 dbManagerInterface
+	apiMan                apiManagerInterface
+	concurrentDownloads   int
+	markConfigFailedAfter time.Duration
+	bundleRetryDelay      time.Duration
+	bundleCleanupDelay    time.Duration
+	downloadQueue         chan *DownloadRequest
+	isClosed              *int32
+	workers               []*BundleDownloader
+	client                *http.Client
 }
 
 type blobServerResponse struct {
@@ -99,7 +99,7 @@ func (bm *bundleManager) makeDownloadRequest(blobId string, changelistRequest *C
 	if blobId == "" {
 		return nil
 	}
-	markFailedAt := time.Now().Add(bm.markDeploymentFailedAfter)
+	markFailedAt := time.Now().Add(bm.markConfigFailedAfter)
 	retryIn := bm.bundleRetryDelay
 	maxBackOff := 5 * time.Minute
 
