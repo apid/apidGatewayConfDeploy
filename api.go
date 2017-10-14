@@ -115,8 +115,9 @@ type confChangeNotification struct {
 }
 
 type apiManagerInterface interface {
+	// an idempotent method to initialize api endpoints
 	InitAPI()
-	notifyNewChangeList(newLSN string)
+	notifyNewChange()
 }
 
 type apiManager struct {
@@ -145,13 +146,13 @@ func (a *apiManager) initDistributeEvents() {
 	go util.DistributeEvents(a.newChangeListChan, a.addSubscriber)
 }
 
-func (a *apiManager) notifyNewChangeList(newLSN string) {
-	confs, err := a.dbMan.getReadyConfigurations("")
+func (a *apiManager) notifyNewChange() {
+	confs, err := a.dbMan.getAllConfigurations("")
 	if err != nil {
 		log.Errorf("Database error in getReadyConfigurations: %v", err)
 	}
 	a.newChangeListChan <- &confChangeNotification{
-		LSN:   newLSN,
+		LSN:   a.dbMan.getLSN(),
 		confs: confs,
 		err:   err,
 	}
@@ -305,7 +306,7 @@ func (a *apiManager) LongPollTimeoutHandler(w http.ResponseWriter) {
 }
 
 func (a *apiManager) sendReadyConfigurations(typeFilter string, w http.ResponseWriter, apidLSN string) {
-	configurations, err := a.dbMan.getReadyConfigurations(typeFilter)
+	configurations, err := a.dbMan.getAllConfigurations(typeFilter)
 	if err != nil {
 		log.Errorf("Database error: %v", err)
 		a.writeInternalError(w, fmt.Sprintf("Database error: %s", err.Error()))

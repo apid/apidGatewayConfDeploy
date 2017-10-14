@@ -54,6 +54,7 @@ type dbManagerInterface interface {
 	initDb() error
 	getUnreadyBlobs() ([]string, error)
 	getReadyConfigurations(typeFilter string) ([]Configuration, error)
+	getAllConfigurations(typeFilter string) ([]Configuration, error)
 	updateLocalFsLocation(string, string) error
 	getLocalFSLocation(string) (string, error)
 	getConfigById(string) (*Configuration, error)
@@ -292,6 +293,64 @@ func (dbc *dbManager) getReadyConfigurations(typeFilter string) ([]Configuration
 
 	//log.Debugf("Configurations ready: %v", confs)
 
+	return confs, nil
+
+}
+
+func (dbc *dbManager) getAllConfigurations(typeFilter string) ([]Configuration, error) {
+
+	// An alternative statement is in get_ready_deployments.sql
+	// Need testing with large data volume to determine which is better
+
+	var rows *sql.Rows
+	var err error
+	if typeFilter == "" {
+		rows, err = dbc.getDb().Query(`
+		SELECT 	a.id,
+			a.organization_id,
+			a.environment_id,
+			a.bean_blob_id,
+			a.resource_blob_id,
+			a.type,
+			a.name,
+			a.revision,
+			a.path,
+			a.created_at,
+			a.created_by,
+			a.updated_at,
+			a.updated_by
+		FROM METADATA_RUNTIME_ENTITY_METADATA as a
+	;`)
+	} else {
+		rows, err = dbc.getDb().Query(`
+		SELECT 	a.id,
+			a.organization_id,
+			a.environment_id,
+			a.bean_blob_id,
+			a.resource_blob_id,
+			a.type,
+			a.name,
+			a.revision,
+			a.path,
+			a.created_at,
+			a.created_by,
+			a.updated_at,
+			a.updated_by
+		FROM METADATA_RUNTIME_ENTITY_METADATA as a
+		WHERE a.type = ?
+	;`, typeFilter)
+	}
+
+	if err != nil {
+		log.Errorf("DB Query for project_runtime_blob_metadata failed %v", err)
+		return nil, err
+	}
+	defer rows.Close()
+
+	confs, err := configurationsFromDbRows(rows)
+	if err != nil {
+		return nil, err
+	}
 	return confs, nil
 
 }

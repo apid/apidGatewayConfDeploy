@@ -81,7 +81,7 @@ func (h *apigeeSyncHandler) processSnapshot(snapshot *common.Snapshot) {
 		h.dbMan.loadLsnFromDb()
 	}
 	h.startupOnExistingDatabase()
-	h.apiMan.InitAPI()
+	//h.apiMan.InitAPI()
 	log.Debug("Snapshot processed")
 }
 
@@ -98,9 +98,12 @@ func (h *apigeeSyncHandler) startupOnExistingDatabase() {
 		}
 
 		log.Debugf("Queuing %d blob downloads", len(blobIds))
-		for _, id := range blobIds {
-			go h.bundleMan.enqueueRequest(h.bundleMan.makeDownloadRequest(id, nil))
-		}
+
+		// initialize API endpoints only after 1 round of download attempts is made
+		h.bundleMan.downloadBlobsWithCallback(blobIds, func() {
+			h.apiMan.InitAPI()
+			h.apiMan.notifyNewChange()
+		})
 
 	}()
 }
@@ -136,17 +139,45 @@ func (h *apigeeSyncHandler) processChangeList(changes *common.ChangeList) {
 	if len(deletedConfigs)+len(updatedOldConfigs) > 0 {
 		log.Debugf("will delete %d old blobs", len(deletedConfigs)+len(updatedOldConfigs))
 		//TODO delete blobs for deleted configs
-		go h.bundleMan.deleteBlobsFromConfigs(append(deletedConfigs, updatedOldConfigs...))
+		blobIds := extractBlobsToDelete(append(deletedConfigs, updatedOldConfigs...))
+		go h.bundleMan.deleteBlobs(blobIds)
 	}
 
 	// download and expose new configs
 	if isConfigChanged {
 		h.dbMan.updateLSN(changes.LastSequence)
-		h.bundleMan.downloadBlobsForChangeList(append(insertedConfigs, updatedNewConfigs...), changes.LastSequence)
+		blobs := extractBlobsToDownload(append(insertedConfigs, updatedNewConfigs...))
+		h.bundleMan.downloadBlobsWithCallback(blobs, h.apiMan.notifyNewChange)
 	} else if h.dbMan.getLSN() == InitLSN {
 		h.dbMan.updateLSN(changes.LastSequence)
 	}
 
+}
+
+func extractBlobsToDownload(confs []*Configuration) (blobs []string) {
+	//TODO: do not include already-downloaded blobs
+	for _, conf := range confs {
+		if conf.BlobID != "" {
+			blobs = append(blobs, conf.BlobID)
+		}
+		if conf.BlobResourceID != "" {
+			blobs = append(blobs, conf.BlobResourceID)
+		}
+	}
+	return
+}
+
+func extractBlobsToDelete(confs []*Configuration) (blobs []string) {
+	//TODO: do not include already-downloaded blobs
+	for _, conf := range confs {
+		if conf.BlobID != "" {
+			blobs = append(blobs, conf.BlobID)
+		}
+		if conf.BlobResourceID != "" {
+			blobs = append(blobs, conf.BlobResourceID)
+		}
+	}
+	return
 }
 
 func configurationFromRow(row common.Row) (c Configuration) {

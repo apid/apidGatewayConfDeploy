@@ -259,16 +259,16 @@ var _ = Describe("api", func() {
 			uri.Path = configEndpoint + strconv.Itoa(testCount)
 			query := uri.Query()
 			query.Add("block", "2")
-			query.Add(apidConfigIndexPar, dummyDbMan.lsn)
+			query.Add(apidConfigIndexPar, "1.0.0")
 			uri.RawQuery = query.Encode()
-
 			// set test data
 			details := setTestDeployments(dummyDbMan, strings.Split(uri.String(), "?")[0])
 
 			// notify change
 			go func() {
 				time.Sleep(time.Second)
-				testApiMan.notifyNewChangeList(testLSN)
+				dummyDbMan.lsn = testLSN
+				testApiMan.notifyNewChange()
 			}()
 
 			// http get
@@ -276,7 +276,7 @@ var _ = Describe("api", func() {
 			Expect(err).Should(Succeed())
 			defer res.Body.Close()
 			Expect(res.StatusCode).Should(Equal(http.StatusOK))
-
+			Expect(res.Header.Get(apidConfigIndexHeader)).Should(Equal(testLSN))
 			// parse response
 			var depRes ApiConfigurationResponse
 			body, err := ioutil.ReadAll(res.Body)
@@ -321,7 +321,8 @@ var _ = Describe("api", func() {
 			// notify change
 			go func() {
 				time.Sleep(1500 * time.Millisecond)
-				testApiMan.notifyNewChangeList(testLSN)
+				dummyDbMan.lsn = testLSN
+				testApiMan.notifyNewChange()
 			}()
 
 			for i := 0; i < count; i++ {
@@ -508,8 +509,8 @@ func makeTestDeployment() *Configuration {
 		ID:             util.GenerateUUID(),
 		OrgID:          util.GenerateUUID(),
 		EnvID:          util.GenerateUUID(),
-		BlobID:         testBlobId,
-		BlobResourceID: "",
+		BlobID:         util.GenerateUUID(), //testBlobId,
+		BlobResourceID: util.GenerateUUID(), //"",
 		Type:           "virtual-host",
 		Name:           "vh-secure",
 		Revision:       "1",
@@ -531,7 +532,7 @@ func makeExpectedDetail(dep *Configuration, self string) *ApiConfigurationDetail
 		BeanBlobUrl:     getBlobUrl(dep.BlobID),
 		Org:             dep.OrgID,
 		Env:             dep.EnvID,
-		ResourceBlobUrl: "",
+		ResourceBlobUrl: getBlobUrl(dep.BlobResourceID),
 		Path:            dep.Path,
 		Created:         dep.Created,
 		Updated:         dep.Updated,
@@ -563,6 +564,13 @@ func (d *dummyDbManager) getUnreadyBlobs() ([]string, error) {
 }
 
 func (d *dummyDbManager) getReadyConfigurations(typeFilter string) ([]Configuration, error) {
+	if typeFilter == "" {
+		return d.readyDeployments, nil
+	}
+	return []Configuration{*(d.configurations[typeFilter])}, nil
+}
+
+func (d *dummyDbManager) getAllConfigurations(typeFilter string) ([]Configuration, error) {
 	if typeFilter == "" {
 		return d.readyDeployments, nil
 	}

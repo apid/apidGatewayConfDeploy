@@ -19,7 +19,6 @@ import (
 
 	"bytes"
 	"encoding/json"
-	"fmt"
 	"github.com/apid/apid-core/util"
 	"github.com/gorilla/mux"
 	. "github.com/onsi/ginkgo"
@@ -67,7 +66,8 @@ var _ = Describe("api", func() {
 
 		// init dummy api manager
 		dummyApiMan = &dummyApiManager{
-			lsnChan: make(chan string, 1),
+			notifyChan: make(chan int, 1),
+			initCalled: make(chan bool),
 		}
 
 		// init bundle manager
@@ -147,7 +147,6 @@ var _ = Describe("api", func() {
 	Context("download blobs for changelist", func() {
 		It("should download blobs for changelist", func() {
 			//setup test data
-			testLSN := fmt.Sprintf("%d.%d.%d", testCount, testCount, testCount)
 			count := mathrand.Intn(10) + 1
 			configs := make([]*Configuration, count)
 			for i := 0; i < count; i++ {
@@ -158,18 +157,17 @@ var _ = Describe("api", func() {
 			}
 
 			// should download blobs for changelist
-			testBundleMan.downloadBlobsForChangeList(configs, testLSN)
+			testBundleMan.downloadBlobsWithCallback(extractBlobsToDownload(configs), dummyApiMan.notifyNewChange)
 			for i := 0; i < 2*count; i++ {
 				<-dummyDbMan.fileResponse
 			}
 
 			// should notify after 1st download attempt
-			Expect(<-dummyApiMan.lsnChan).Should(Equal(testLSN))
+			<-dummyApiMan.notifyChan
 		})
 
 		It("should notify after 1st download attempt unless failure", func() {
 			//setup test data
-			testLSN := fmt.Sprintf("%d.%d.%d", testCount, testCount, testCount)
 			count := mathrand.Intn(10) + 1
 			configs := make([]*Configuration, count)
 			for i := 0; i < count; i++ {
@@ -186,10 +184,10 @@ var _ = Describe("api", func() {
 			testBundleMan.bundleRetryDelay = 50 * time.Millisecond
 
 			// should download blobs for changelist
-			testBundleMan.downloadBlobsForChangeList(configs, testLSN)
+			testBundleMan.downloadBlobsWithCallback(extractBlobsToDownload(configs), dummyApiMan.notifyNewChange)
 
 			// should notify after 1st download attempt
-			Expect(<-dummyApiMan.lsnChan).Should(Equal(testLSN))
+			<-dummyApiMan.notifyChan
 
 			//should retry download
 			for i := 0; i < 2*count; i++ {
@@ -202,16 +200,18 @@ var _ = Describe("api", func() {
 })
 
 type dummyApiManager struct {
-	initCalled bool
-	lsnChan    chan string
+	initCalled chan bool
+	notifyChan chan int
 }
 
 func (a *dummyApiManager) InitAPI() {
-	a.initCalled = true
+	go func() {
+		a.initCalled <- true
+	}()
 }
 
-func (a *dummyApiManager) notifyNewChangeList(newLSN string) {
-	a.lsnChan <- newLSN
+func (a *dummyApiManager) notifyNewChange() {
+	a.notifyChan <- 1
 }
 
 type dummyBlobServer struct {

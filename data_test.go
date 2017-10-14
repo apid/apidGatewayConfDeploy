@@ -140,6 +140,13 @@ var _ = Describe("data", func() {
 	})
 
 	Context("configuration tests", func() {
+
+		It("should get all configs", func() {
+			confs, err := testDbMan.getAllConfigurations("")
+			Expect(err).Should(Succeed())
+			Expect(len(confs)).Should(Equal(6))
+		})
+
 		It("should get empty slice if no configurations are ready", func() {
 			confs, err := testDbMan.getReadyConfigurations("")
 			Expect(err).Should(Succeed())
