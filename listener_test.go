@@ -293,38 +293,6 @@ var _ = Describe("listener", func() {
 	})
 })
 
-type dummyBundleManager struct {
-	blobChan chan string
-}
-
-func (bm *dummyBundleManager) initializeBundleDownloading() {
-
-}
-
-func (bm *dummyBundleManager) downloadBlobsWithCallback(blobs []string, callback func()) {
-	go func() {
-		for _, id := range blobs {
-			bm.blobChan <- id
-		}
-	}()
-	go callback()
-}
-
-func (bm *dummyBundleManager) makeDownloadRequest(blobId string, bunchRequest *BunchDownloadRequest) *DownloadRequest {
-	return &DownloadRequest{
-		blobId:       blobId,
-		bunchRequest: bunchRequest,
-	}
-}
-
-func (bm *dummyBundleManager) deleteBlobs(blobIds []string) {
-
-}
-
-func (bm *dummyBundleManager) Close() {
-
-}
-
 func rowFromDeployment(dep *Configuration) common.Row {
 	row := common.Row{}
 	row["id"] = &common.ColumnVal{Value: dep.ID}

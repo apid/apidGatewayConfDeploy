@@ -106,7 +106,6 @@ func (bm *bundleManager) enqueueRequest(r *DownloadRequest) {
 	}
 }
 
-//TODO: add tests for this
 func (bm *bundleManager) downloadBlobsWithCallback(blobs []string, callback func()) {
 
 	c := &BunchDownloadRequest{

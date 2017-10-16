@@ -53,7 +53,6 @@ type dbManagerInterface interface {
 	setDbVersion(string)
 	initDb() error
 	getUnreadyBlobs() ([]string, error)
-	getReadyConfigurations(typeFilter string) ([]Configuration, error)
 	getAllConfigurations(typeFilter string) ([]Configuration, error)
 	updateLocalFsLocation(string, string) error
 	getLocalFSLocation(string) (string, error)

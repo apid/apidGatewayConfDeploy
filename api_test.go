@@ -24,7 +24,6 @@ import (
 	mathrand "math/rand"
 	"net/http"
 	"net/url"
-	"os"
 	"strconv"
 	"strings"
 	"time"
@@ -538,79 +537,4 @@ func makeExpectedDetail(dep *Configuration, self string) *ApiConfigurationDetail
 		Updated:         dep.Updated,
 	}
 	return detail
-}
-
-type dummyDbManager struct {
-	unreadyBlobIds   []string
-	readyDeployments []Configuration
-	localFSLocation  string
-	fileResponse     chan string
-	version          string
-	configurations   map[string]*Configuration
-	lsn              string
-	err              error
-}
-
-func (d *dummyDbManager) setDbVersion(version string) {
-	d.version = version
-}
-
-func (d *dummyDbManager) initDb() error {
-	return nil
-}
-
-func (d *dummyDbManager) getUnreadyBlobs() ([]string, error) {
-	return d.unreadyBlobIds, nil
-}
-
-func (d *dummyDbManager) getReadyConfigurations(typeFilter string) ([]Configuration, error) {
-	if typeFilter == "" {
-		return d.readyDeployments, nil
-	}
-	return []Configuration{*(d.configurations[typeFilter])}, nil
-}
-
-func (d *dummyDbManager) getAllConfigurations(typeFilter string) ([]Configuration, error) {
-	if typeFilter == "" {
-		return d.readyDeployments, nil
-	}
-	return []Configuration{*(d.configurations[typeFilter])}, nil
-}
-
-func (d *dummyDbManager) updateLocalFsLocation(blobId, localFsLocation string) error {
-	file, err := os.Open(localFsLocation)
-	if err != nil {
-		return err
-	}
-	buff := make([]byte, 36)
-	_, err = file.Read(buff)
-	if err != nil {
-		return err
-	}
-	go func(buff []byte) {
-		d.fileResponse <- string(buff)
-	}(buff)
-
-	return nil
-}
-
-func (d *dummyDbManager) getLocalFSLocation(string) (string, error) {
-	return d.localFSLocation, nil
-}
-
-func (d *dummyDbManager) getConfigById(id string) (*Configuration, error) {
-	return d.configurations[id], d.err
-}
-func (d *dummyDbManager) getLSN() string {
-	return d.lsn
-}
-
-func (d *dummyDbManager) updateLSN(LSN string) error {
-	d.lsn = LSN
-	return nil
-}
-
-func (d *dummyDbManager) loadLsnFromDb() error {
-
-	return nil
 }
