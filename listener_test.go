@@ -37,7 +37,7 @@ var _ = Describe("listener", func() {
 		eventHandler.stopListener(services)
 
 		dummyApiMan = &dummyApiManager{
-			notifyChan: make(chan int, 1),
+			notifyChan: make(chan bool, 1),
 			initCalled: make(chan bool),
 		}
 		dummyDbMan = &dummyDbManager{
@@ -89,7 +89,7 @@ var _ = Describe("listener", func() {
 			}
 		})
 
-		It("Snapshot events should set db version, and should only init API endpoint once", func() {
+		It("Snapshot events should set db version", func() {
 
 			// emit snapshot
 			for i := 0; i < 2+rand.Intn(5); i++ {
@@ -100,9 +100,19 @@ var _ = Describe("listener", func() {
 				<-apid.Events().Emit(APIGEE_SYNC_EVENT, snapshot)
 				Expect(dummyDbMan.version).Should(Equal(version))
 			}
+		})
 
-			// verify init API called
-			// Expect(<-dummyApiMan.initCalled).Should(BeTrue())
+		It("Snapshot event should init API endpoint and notify long-polling", func() {
+
+			// emit snapshot
+			version := fmt.Sprint(rand.Uint32())
+			snapshot := &common.Snapshot{
+				SnapshotInfo: version,
+			}
+			<-apid.Events().Emit(APIGEE_SYNC_EVENT, snapshot)
+			Expect(dummyDbMan.version).Should(Equal(version))
+			Expect(<-dummyApiMan.initCalled).Should(BeTrue())
+			Expect(<-dummyApiMan.notifyChan).Should(BeTrue())
 		})
 
 	})
@@ -297,6 +307,7 @@ func (bm *dummyBundleManager) downloadBlobsWithCallback(blobs []string, callback
 			bm.blobChan <- id
 		}
 	}()
+	go callback()
 }
 
 func (bm *dummyBundleManager) makeDownloadRequest(blobId string, bunchRequest *BunchDownloadRequest) *DownloadRequest {

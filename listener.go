@@ -36,13 +36,6 @@ func (h *apigeeSyncHandler) stopListener(services apid.Services) {
 	}
 }
 
-type bundleConfigJson struct {
-	Name         string `json:"name"`
-	URI          string `json:"uri"`
-	ChecksumType string `json:"checksumType"`
-	Checksum     string `json:"checksum"`
-}
-
 type apigeeSyncHandler struct {
 	dbMan     dbManagerInterface
 	apiMan    apiManagerInterface

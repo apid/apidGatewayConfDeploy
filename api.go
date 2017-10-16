@@ -408,7 +408,7 @@ func convertTime(t string) string {
 
 func getHttpHost() string {
 
-	configuredEndpoint := config.GetString(configBundleBlobDownloadEndpoint)
+	configuredEndpoint := config.GetString(configBlobDownloadEndpoint)
 	if configuredEndpoint != "" {
 		return configuredEndpoint
 	}

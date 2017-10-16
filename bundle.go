@@ -150,10 +150,10 @@ func (b *BunchDownloadRequest) download() {
 		}
 	}
 	b.blobs = ids
-	log.Debug("Attempt to download blobs, len: %v", len(b.blobs))
+	log.Debugf("Attempt to download blobs, len: %v", len(b.blobs))
 
 	if len(b.blobs) == 0 && b.callback != nil {
-		b.callback()
+		go b.callback()
 		return
 	}
 
@@ -181,7 +181,7 @@ type DownloadRequest struct {
 	attempted     bool
 }
 
-func (r *DownloadRequest) downloadBundle() error {
+func (r *DownloadRequest) downloadBlob() error {
 
 	log.Debugf("starting bundle download attempt for blobId=%s", r.blobId)
 	var err error
@@ -355,7 +355,7 @@ func (w *BundleDownloader) Start() {
 
 		for req := range w.bm.downloadQueue {
 			log.Debugf("starting download blobId=%s", req.blobId)
-			err := req.downloadBundle()
+			err := req.downloadBlob()
 			if err != nil {
 				// timeout
 				if _, ok := err.(*timeoutError); ok {

@@ -66,7 +66,7 @@ var _ = Describe("api", func() {
 
 		// init dummy api manager
 		dummyApiMan = &dummyApiManager{
-			notifyChan: make(chan int, 1),
+			notifyChan: make(chan bool, 1),
 			initCalled: make(chan bool),
 		}
 
@@ -142,6 +142,28 @@ var _ = Describe("api", func() {
 			time.Sleep(time.Second)
 			Expect(req.markFailedAt.IsZero()).Should(BeTrue())
 		}, 4)
+
+		It("should call callback func after a round of download attempts", func() {
+			// download blobs
+			var ids []string
+			num := 1 + mathrand.Intn(5)
+			for i := 0; i < num; i++ {
+				ids = append(ids, util.GenerateUUID())
+			}
+			finishChan := make(chan int)
+			testBundleMan.downloadBlobsWithCallback(ids, func() {
+				finishChan <- 1
+			})
+			for i := 0; i < num; i++ {
+				<-dummyDbMan.fileResponse
+			}
+			<-finishChan
+			// if there's no blob
+			testBundleMan.downloadBlobsWithCallback(nil, func() {
+				finishChan <- 1
+			})
+			<-finishChan
+		}, 1)
 	})
 
 	Context("download blobs for changelist", func() {
@@ -201,7 +223,7 @@ var _ = Describe("api", func() {
 
 type dummyApiManager struct {
 	initCalled chan bool
-	notifyChan chan int
+	notifyChan chan bool
 }
 
 func (a *dummyApiManager) InitAPI() {
@@ -211,7 +233,7 @@ func (a *dummyApiManager) InitAPI() {
 }
 
 func (a *dummyApiManager) notifyNewChange() {
-	a.notifyChan <- 1
+	a.notifyChan <- true
 }
 
 type dummyBlobServer struct {
