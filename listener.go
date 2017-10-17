@@ -69,9 +69,14 @@ func (h *apigeeSyncHandler) processSnapshot(snapshot *common.Snapshot) {
 	}
 
 	if lsn := h.dbMan.getLSN(); lsn != "" {
-		h.dbMan.updateLSN(lsn)
+		// receive a new snapshot at runtime
+		if err = h.dbMan.updateLSN(lsn); err != nil {
+			log.Errorf("Unable to update LSN: %v", err)
+		}
 	} else { //apid just started
-		h.dbMan.loadLsnFromDb()
+		if err = h.dbMan.loadLsnFromDb(); err != nil {
+			log.Errorf("Unable to load LSN From Db: %v", err)
+		}
 	}
 	h.startupOnExistingDatabase()
 	//h.apiMan.InitAPI()

@@ -187,6 +187,7 @@ func (dbc *dbManager) getUnreadyBlobs() (ids []string, err error) {
 	return
 }
 
+/*
 func (dbc *dbManager) getReadyConfigurations(typeFilter string) ([]Configuration, error) {
 
 	// An alternative statement is in get_ready_deployments.sql
@@ -295,7 +296,7 @@ func (dbc *dbManager) getReadyConfigurations(typeFilter string) ([]Configuration
 	return confs, nil
 
 }
-
+*/
 func (dbc *dbManager) getAllConfigurations(typeFilter string) ([]Configuration, error) {
 
 	// An alternative statement is in get_ready_deployments.sql

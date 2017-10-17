@@ -40,9 +40,7 @@ var _ = Describe("listener", func() {
 			notifyChan: make(chan bool, 1),
 			initCalled: make(chan bool),
 		}
-		dummyDbMan = &dummyDbManager{
-			lsn: "0.0.1",
-		}
+		dummyDbMan = &dummyDbManager{}
 		dummyBundleMan = &dummyBundleManager{
 			blobChan: make(chan string),
 		}
@@ -115,6 +113,27 @@ var _ = Describe("listener", func() {
 			Expect(<-dummyApiMan.notifyChan).Should(BeTrue())
 		})
 
+		It("Should load LSN when apid starts", func() {
+			dummyDbMan.dbLSN = fmt.Sprintf("%d.%d.%d", testCount, testCount, testCount)
+			// emit snapshot
+			version := fmt.Sprint(rand.Uint32())
+			snapshot := &common.Snapshot{
+				SnapshotInfo: version,
+			}
+			<-apid.Events().Emit(APIGEE_SYNC_EVENT, snapshot)
+			Expect(dummyDbMan.getLSN()).Should(Equal(dummyDbMan.dbLSN))
+		})
+
+		It("Should store LSN when receiving snapshot at runtime", func() {
+			dummyDbMan.lsn = fmt.Sprintf("%d.%d.%d", testCount, testCount, testCount)
+			// emit snapshot
+			version := fmt.Sprint(rand.Uint32())
+			snapshot := &common.Snapshot{
+				SnapshotInfo: version,
+			}
+			<-apid.Events().Emit(APIGEE_SYNC_EVENT, snapshot)
+			Expect(dummyDbMan.getLSN()).Should(Equal(dummyDbMan.dbLSN))
+		})
 	})
 
 	Context("Change list", func() {
@@ -221,6 +240,11 @@ var _ = Describe("listener", func() {
 	})
 
 	Context("LSN", func() {
+
+		var _ = BeforeEach(func() {
+			dummyDbMan.lsn = "0.0.1"
+		})
+
 		It("changelist with CONFIG_METADATA_TABLE should update apidLSN", func() {
 			// emit change event
 			changes := make([]common.Change, 0)

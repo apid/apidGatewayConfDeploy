@@ -22,6 +22,7 @@ type dummyDbManager struct {
 	version          string
 	configurations   map[string]*Configuration
 	lsn              string
+	dbLSN            string
 	err              error
 }
 
@@ -74,11 +75,12 @@ func (d *dummyDbManager) getLSN() string {
 
 func (d *dummyDbManager) updateLSN(LSN string) error {
 	d.lsn = LSN
+	d.dbLSN = LSN
 	return nil
 }
 
 func (d *dummyDbManager) loadLsnFromDb() error {
-
+	d.lsn = d.dbLSN
 	return nil
 }
 

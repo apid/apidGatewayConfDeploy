@@ -163,16 +163,18 @@ var _ = Describe("data", func() {
 
 		It("should get empty slice if no configurations", func() {
 			trancateTestMetadataTable(testDbMan.getDb())
-			confs, err := testDbMan.getReadyConfigurations("")
+			confs, err := testDbMan.getAllConfigurations("")
 			Expect(err).Should(Succeed())
 			Expect(len(confs)).Should(BeZero())
 		})
 
-		XIt("should get empty slice if no configurations are ready", func() {
-			confs, err := testDbMan.getReadyConfigurations("")
-			Expect(err).Should(Succeed())
-			Expect(len(confs)).Should(BeZero())
-		})
+		/*
+			XIt("should get empty slice if no configurations are ready", func() {
+				confs, err := testDbMan.getReadyConfigurations("")
+				Expect(err).Should(Succeed())
+				Expect(len(confs)).Should(BeZero())
+			})
+		*/
 
 		It("should succefully update local FS location", func() {
 
@@ -229,24 +231,25 @@ var _ = Describe("data", func() {
 			Expect(err).ShouldNot(Succeed())
 		})
 
-		XIt("should successfully get all ready configurations", func() {
+		/*
+			XIt("should successfully get all ready configurations", func() {
 
-			err := testDbMan.updateLocalFsLocation(readyBlobId, testBlobLocalFsPrefix+readyBlobId)
-			Expect(err).Should(Succeed())
-			err = testDbMan.updateLocalFsLocation(readyResourceId, testBlobLocalFsPrefix+readyResourceId)
-			Expect(err).Should(Succeed())
+				err := testDbMan.updateLocalFsLocation(readyBlobId, testBlobLocalFsPrefix+readyBlobId)
+				Expect(err).Should(Succeed())
+				err = testDbMan.updateLocalFsLocation(readyResourceId, testBlobLocalFsPrefix+readyResourceId)
+				Expect(err).Should(Succeed())
 
-			confs, err := testDbMan.getReadyConfigurations("")
-			Expect(err).Should(Succeed())
-			Expect(len(confs)).Should(Equal(2))
-			for _, conf := range confs {
-				Expect(conf.BlobID).Should(Equal(readyBlobId))
-				if conf.BlobResourceID != "" {
-					Expect(conf.BlobResourceID).Should(Equal(readyResourceId))
+				confs, err := testDbMan.getReadyConfigurations("")
+				Expect(err).Should(Succeed())
+				Expect(len(confs)).Should(Equal(2))
+				for _, conf := range confs {
+					Expect(conf.BlobID).Should(Equal(readyBlobId))
+					if conf.BlobResourceID != "" {
+						Expect(conf.BlobResourceID).Should(Equal(readyResourceId))
+					}
 				}
-			}
-		})
-
+			})
+		*/
 		It("should get all configurations by type filter", func() {
 
 			err := testDbMan.updateLocalFsLocation(readyBlobId, testBlobLocalFsPrefix+readyBlobId)
