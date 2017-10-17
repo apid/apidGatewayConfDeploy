@@ -299,21 +299,17 @@ func (dbc *dbManager) updateLocalFsLocation(blobId, localFsLocation string) erro
 func (dbc *dbManager) getLocalFSLocation(blobId string) (localFsLocation string, err error) {
 
 	log.Debugf("Getting the blob file for blobId {%s}", blobId)
-	rows, err := dbc.getDb().Query("SELECT local_fs_location FROM apid_blob_available WHERE id = '" + blobId + "'")
+	row := dbc.getDb().QueryRow("SELECT local_fs_location FROM apid_blob_available WHERE id = '" + blobId + "'")
+	err = row.Scan(&localFsLocation)
 	if err != nil {
-		log.Errorf("SELECT local_fs_location failed %v", err)
+		if err == sql.ErrNoRows {
+			log.Debugf("No local_fs_location associated with blobid=%v", blobId)
+			return "", nil
+		}
+		log.Errorf("Scan local_fs_location failed %v", err)
 		return "", err
 	}
-
-	defer rows.Close()
-	for rows.Next() {
-		err = rows.Scan(&localFsLocation)
-		if err != nil {
-			log.Errorf("Scan local_fs_location failed %v", err)
-			return "", err
-		}
-		log.Debugf("Got the blob file {%s} for blobId {%s}", localFsLocation, blobId)
-	}
+	log.Debugf("Got the blob file {%s} for blobId {%s}", localFsLocation, blobId)
 	return
 }
 

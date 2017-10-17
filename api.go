@@ -50,6 +50,7 @@ const (
 	API_ERR_INTERNAL
 	API_ERR_BAD_CONFIG_ID
 	API_ERR_NOT_FOUND
+	API_ERR_BLOB_NOT_FOUND
 )
 
 const (
@@ -221,8 +222,11 @@ func (a *apiManager) apiReturnBlobData(w http.ResponseWriter, r *http.Request) {
 	blobId := vars["blobId"]
 	fs, err := a.dbMan.getLocalFSLocation(blobId)
 	if err != nil {
-		a.writeInternalError(w, "BlobId "+blobId+" has no mapping blob file")
+		a.writeInternalError(w, "Db error when getting BlobId="+blobId)
 		return
+	}
+	if fs == "" {
+		a.writeError(w, http.StatusNotFound, API_ERR_BLOB_NOT_FOUND, "BlobId="+blobId+" not found.")
 	}
 	byte, err := ioutil.ReadFile(fs)
 	if err != nil {
