@@ -17,14 +17,11 @@ package apiGatewayConfDeploy
 import (
 	"net/http"
 
-	"bytes"
-	"encoding/json"
 	"github.com/apid/apid-core/util"
-	"github.com/gorilla/mux"
+
 	. "github.com/onsi/ginkgo"
 	. "github.com/onsi/gomega"
-	"io"
-	"strings"
+	mathrand "math/rand"
 	"sync/atomic"
 	"time"
 )
@@ -64,19 +61,22 @@ var _ = Describe("api", func() {
 		}
 
 		// init dummy api manager
-		dummyApiMan = &dummyApiManager{}
+		dummyApiMan = &dummyApiManager{
+			notifyChan: make(chan bool, 1),
+			initCalled: make(chan bool),
+		}
 
 		// init bundle manager
 		testBundleMan = &bundleManager{
-			blobServerUrl:             bundleTestUrl,
-			dbMan:                     dummyDbMan,
-			apiMan:                    dummyApiMan,
-			concurrentDownloads:       concurrentDownloads,
-			markDeploymentFailedAfter: 5 * time.Second,
-			bundleRetryDelay:          time.Second,
-			bundleCleanupDelay:        5 * time.Second,
-			downloadQueue:             make(chan *DownloadRequest, downloadQueueSize),
-			isClosed:                  new(int32),
+			blobServerUrl:         bundleTestUrl,
+			dbMan:                 dummyDbMan,
+			apiMan:                dummyApiMan,
+			concurrentDownloads:   concurrentDownloads,
+			markConfigFailedAfter: 5 * time.Second,
+			bundleRetryDelay:      time.Second,
+			bundleCleanupDelay:    5 * time.Second,
+			downloadQueue:         make(chan *DownloadRequest, downloadQueueSize),
+			isClosed:              new(int32),
 			client: &http.Client{
 				Timeout: time.Second,
 				Transport: &http.Transport{
@@ -95,113 +95,124 @@ var _ = Describe("api", func() {
 		dummyApiMan = nil
 	})
 
-	It("should download blob according to id", func() {
-		// download blob
-		id := util.GenerateUUID()
-		testBundleMan.enqueueRequest(testBundleMan.makeDownloadRequest(id))
-		received := <-dummyDbMan.fileResponse
-		Expect(received).Should(Equal(id))
+	Context("download blobs", func() {
+
+		It("should download blob according to id", func() {
+			// download blob
+			id := util.GenerateUUID()
+			testBundleMan.enqueueRequest(testBundleMan.makeDownloadRequest(id, nil))
+			received := <-dummyDbMan.fileResponse
+			Expect(received).Should(Equal(id))
+		})
+
+		It("should timeout connection and retry", func() {
+			// setup timeout
+			atomic.StoreInt32(blobServer.signedTimeout, 1)
+			atomic.StoreInt32(blobServer.blobTimeout, 1)
+			testBundleMan.client.Timeout = 500 * time.Millisecond
+			testBundleMan.bundleRetryDelay = 50 * time.Millisecond
+
+			// download blobs
+			id := util.GenerateUUID()
+			testBundleMan.enqueueRequest(testBundleMan.makeDownloadRequest(id, nil))
+			received := <-dummyDbMan.fileResponse
+			Expect(received).Should(Equal(id))
+
+		}, 4)
+
+		It("should mark as failure according to markConfigFailedAfter", func() {
+			// setup timeout
+			atomic.StoreInt32(blobServer.signedTimeout, 1)
+			atomic.StoreInt32(blobServer.blobTimeout, 1)
+			testBundleMan.client.Timeout = 100 * time.Millisecond
+			testBundleMan.bundleRetryDelay = 100 * time.Millisecond
+			testBundleMan.markConfigFailedAfter = 200 * time.Millisecond
+
+			// download blobs
+			id := util.GenerateUUID()
+			req := testBundleMan.makeDownloadRequest(id, nil)
+			Expect(req.markFailedAt.After(time.Now())).Should(BeTrue())
+			testBundleMan.enqueueRequest(req)
+
+			// should fail
+			time.Sleep(time.Second)
+			Expect(req.markFailedAt.IsZero()).Should(BeTrue())
+		}, 4)
+
+		It("should call callback func after a round of download attempts", func() {
+			// download blobs
+			var ids []string
+			num := 1 + mathrand.Intn(5)
+			for i := 0; i < num; i++ {
+				ids = append(ids, util.GenerateUUID())
+			}
+			finishChan := make(chan int)
+			testBundleMan.downloadBlobsWithCallback(ids, func() {
+				finishChan <- 1
+			})
+			for i := 0; i < num; i++ {
+				<-dummyDbMan.fileResponse
+			}
+			<-finishChan
+			// if there's no blob
+			testBundleMan.downloadBlobsWithCallback(nil, func() {
+				finishChan <- 1
+			})
+			<-finishChan
+		}, 1)
 	})
 
-	It("should timeout connection and retry", func() {
-		// setup timeout
-		atomic.StoreInt32(blobServer.signedTimeout, 1)
-		atomic.StoreInt32(blobServer.blobTimeout, 1)
-		testBundleMan.client.Timeout = 500 * time.Millisecond
-		testBundleMan.bundleRetryDelay = 50 * time.Millisecond
+	Context("download blobs for changelist", func() {
+		It("should download blobs for changelist", func() {
+			//setup test data
+			count := mathrand.Intn(10) + 1
+			configs := make([]*Configuration, count)
+			for i := 0; i < count; i++ {
+				conf := makeTestDeployment()
+				conf.BlobID = util.GenerateUUID()
+				conf.BlobResourceID = util.GenerateUUID()
+				configs[i] = conf
+			}
 
-		// download blobs
-		id := util.GenerateUUID()
-		testBundleMan.enqueueRequest(testBundleMan.makeDownloadRequest(id))
-		received := <-dummyDbMan.fileResponse
-		Expect(received).Should(Equal(id))
+			// should download blobs for changelist
+			testBundleMan.downloadBlobsWithCallback(extractBlobsToDownload(configs), dummyApiMan.notifyNewChange)
+			for i := 0; i < 2*count; i++ {
+				<-dummyDbMan.fileResponse
+			}
 
-	}, 4)
+			// should notify after 1st download attempt
+			<-dummyApiMan.notifyChan
+		})
 
-	It("should mark as failure according to markDeploymentFailedAfter", func() {
-		// setup timeout
-		atomic.StoreInt32(blobServer.signedTimeout, 1)
-		atomic.StoreInt32(blobServer.blobTimeout, 1)
-		testBundleMan.client.Timeout = 100 * time.Millisecond
-		testBundleMan.bundleRetryDelay = 100 * time.Millisecond
-		testBundleMan.markDeploymentFailedAfter = 200 * time.Millisecond
+		It("should notify after 1st download attempt unless failure", func() {
+			//setup test data
+			count := mathrand.Intn(10) + 1
+			configs := make([]*Configuration, count)
+			for i := 0; i < count; i++ {
+				conf := makeTestDeployment()
+				conf.BlobID = util.GenerateUUID()
+				conf.BlobResourceID = util.GenerateUUID()
+				configs[i] = conf
+			}
 
-		// download blobs
-		id := util.GenerateUUID()
-		req := testBundleMan.makeDownloadRequest(id)
-		Expect(req.markFailedAt.After(time.Now())).Should(BeTrue())
-		testBundleMan.enqueueRequest(req)
+			// setup timeout
+			atomic.StoreInt32(blobServer.signedTimeout, 1)
+			atomic.StoreInt32(blobServer.blobTimeout, 1)
+			testBundleMan.client.Timeout = 500 * time.Millisecond
+			testBundleMan.bundleRetryDelay = 50 * time.Millisecond
 
-		// should fail
-		time.Sleep(time.Second)
-		Expect(req.markFailedAt.IsZero()).Should(BeTrue())
-	}, 4)
+			// should download blobs for changelist
+			testBundleMan.downloadBlobsWithCallback(extractBlobsToDownload(configs), dummyApiMan.notifyNewChange)
+
+			// should notify after 1st download attempt
+			<-dummyApiMan.notifyChan
+
+			//should retry download
+			for i := 0; i < 2*count; i++ {
+				<-dummyDbMan.fileResponse
+			}
+		})
+
+	})
+
 })
-
-type dummyApiManager struct {
-	initCalled bool
-}
-
-func (a *dummyApiManager) InitAPI() {
-	a.initCalled = true
-}
-
-type dummyBlobServer struct {
-	serverEndpoint string
-	signedEndpoint string
-	signedTimeout  *int32
-	blobTimeout    *int32
-	resetTimeout   bool
-}
-
-func (b *dummyBlobServer) start() {
-	services.API().HandleFunc(b.serverEndpoint, b.returnSigned).Methods("GET")
-	services.API().HandleFunc(b.signedEndpoint, b.returnBlob).Methods("GET")
-}
-
-// send a dummy uri as response
-func (b *dummyBlobServer) returnSigned(w http.ResponseWriter, r *http.Request) {
-	defer GinkgoRecover()
-	if atomic.LoadInt32(b.signedTimeout) == int32(1) {
-		if b.resetTimeout {
-			atomic.StoreInt32(b.signedTimeout, 0)
-		}
-		time.Sleep(time.Second)
-	}
-	vars := mux.Vars(r)
-	blobId := vars["blobId"]
-
-	uriString := strings.Replace(bundleTestUrl+b.signedEndpoint, "{blobId}", blobId, 1)
-	log.Debug("dummyBlobServer returnSigned: " + uriString)
-
-	res := blobServerResponse{
-		Id:                       blobId,
-		Kind:                     "Blob",
-		Self:                     r.RequestURI,
-		SignedUrl:                uriString,
-		SignedUrlExpiryTimestamp: time.Now().Add(3 * time.Hour).Format(time.RFC3339),
-	}
-
-	resBytes, err := json.Marshal(res)
-	Expect(err).Should(Succeed())
-	_, err = io.Copy(w, bytes.NewReader(resBytes))
-	Expect(err).Should(Succeed())
-	w.Header().Set("Content-Type", headerSteam)
-}
-
-// send blobId back as response
-func (b *dummyBlobServer) returnBlob(w http.ResponseWriter, r *http.Request) {
-	defer GinkgoRecover()
-	if atomic.LoadInt32(b.blobTimeout) == int32(1) {
-		if b.resetTimeout {
-			atomic.StoreInt32(b.blobTimeout, 0)
-		}
-		time.Sleep(time.Second)
-	}
-	vars := mux.Vars(r)
-	blobId := vars["blobId"]
-	log.Debug("dummyBlobServer returnBlob id=" + blobId)
-	_, err := io.Copy(w, bytes.NewReader([]byte(blobId)))
-	Expect(err).Should(Succeed())
-	w.Header().Set("Content-Type", headerSteam)
-}

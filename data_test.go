@@ -15,6 +15,8 @@
 package apiGatewayConfDeploy
 
 import (
+	"database/sql"
+	"fmt"
 	"github.com/apid/apid-core"
 	"github.com/apid/apid-core/data"
 	. "github.com/onsi/ginkgo"
@@ -36,6 +38,8 @@ var (
 		"gcs:SHA-512:8fcc902465ccb32ceff25fa9f6fb28e3b314dbc2874c0f8add02f4e29c9e2798d344c51807aa1af56035cf09d39c800cf605d627ba65723f26d8b9c83c82d2f2": true,
 		"gcs:SHA-512:0c648779da035bfe0ac21f6268049aa0ae74d9d6411dadefaec33991e55c2d66c807e06f7ef84e0947f7c7d63b8c9e97cf0684cbef9e0a86b947d73c74ae7455": true,
 	}
+
+	allConfigs map[string]bool
 )
 
 var _ = Describe("data", func() {
@@ -44,13 +48,22 @@ var _ = Describe("data", func() {
 	var _ = BeforeEach(func() {
 		testCount += 1
 		testDbMan = &dbManager{
-			data:  services.Data(),
-			dbMux: sync.RWMutex{},
+			data:     services.Data(),
+			dbMux:    sync.RWMutex{},
+			lsnMutex: sync.RWMutex{},
 		}
 		testDbMan.setDbVersion("test" + strconv.Itoa(testCount))
 		initTestDb(testDbMan.getDb())
 		err := testDbMan.initDb()
 		Expect(err).Should(Succeed())
+		allConfigs = map[string]bool{
+			"1dc4895e-6494-4b59-979f-5f4c89c073b4": true,
+			"319963ff-217e-4ecc-8d6e-c3665e962d1e": true,
+			"3af44bb7-0a74-4283-860c-3561e6c19132": true,
+			"d5ffd9db-4795-43eb-b645-d2a0b6c8ac6a": true,
+			"84ac8d68-b3d1-4bcc-ad0d-c6a0ed67e16c": true,
+			"3ecd351c-1173-40bf-b830-c194e5ef9038": true,
+		}
 		time.Sleep(100 * time.Millisecond)
 	})
 
@@ -59,7 +72,7 @@ var _ = Describe("data", func() {
 		data.Delete(data.VersionedDBID("common", "test"+strconv.Itoa(testCount)))
 	})
 
-	Context("db tests", func() {
+	Context("basic db tests", func() {
 		It("initDb() should be idempotent", func() {
 			err := testDbMan.initDb()
 			Expect(err).Should(Succeed())
@@ -90,11 +103,78 @@ var _ = Describe("data", func() {
 			Expect(count).Should(Equal(6))
 		})
 
-		It("should get empty slice if no deployments are ready", func() {
-			deps, err := testDbMan.getReadyDeployments("")
+		It("should initialize support for long-polling", func() {
+			// APID_CONFIGURATION_LSN
+			rows, err := testDbMan.getDb().Query(`
+				SELECT lsn from APID_CONFIGURATION_LSN;
+			`)
 			Expect(err).Should(Succeed())
-			Expect(len(deps)).Should(BeZero())
+			defer rows.Close()
+			count := 0
+			var lsn sql.NullString
+			for rows.Next() {
+				count++
+				rows.Scan(&lsn)
+			}
+			Expect(count).Should(Equal(1))
+			Expect(lsn.Valid).Should(BeTrue())
+			Expect(lsn.String).Should(Equal(InitLSN))
 		})
+
+		It("should maintain LSN", func() {
+			testLSN := fmt.Sprintf("%d.%d.%d", testCount, testCount, testCount)
+			// write
+			err := testDbMan.updateLSN(testLSN)
+			Expect(err).Should(Succeed())
+			rows, err := testDbMan.getDb().Query(`
+				SELECT lsn from APID_CONFIGURATION_LSN;
+			`)
+			defer rows.Close()
+			count := 0
+			var lsn sql.NullString
+			for rows.Next() {
+				count++
+				rows.Scan(&lsn)
+			}
+			Expect(count).Should(Equal(1))
+			Expect(lsn.Valid).Should(BeTrue())
+			Expect(lsn.String).Should(Equal(testLSN))
+
+			// read
+			Expect(testDbMan.getLSN()).Should(Equal(testLSN))
+
+			//load
+			Expect(testDbMan.loadLsnFromDb()).Should(Succeed())
+			Expect(testDbMan.apidLSN).Should(Equal(testLSN))
+		})
+	})
+
+	Context("configuration tests", func() {
+
+		It("should get all configs", func() {
+			confs, err := testDbMan.getAllConfigurations("")
+			Expect(err).Should(Succeed())
+			Expect(len(confs)).Should(Equal(6))
+			for _, conf := range confs {
+				Expect(allConfigs[conf.ID]).Should(BeTrue())
+				allConfigs[conf.ID] = false
+			}
+		})
+
+		It("should get empty slice if no configurations", func() {
+			trancateTestMetadataTable(testDbMan.getDb())
+			confs, err := testDbMan.getAllConfigurations("")
+			Expect(err).Should(Succeed())
+			Expect(len(confs)).Should(BeZero())
+		})
+
+		/*
+			XIt("should get empty slice if no configurations are ready", func() {
+				confs, err := testDbMan.getReadyConfigurations("")
+				Expect(err).Should(Succeed())
+				Expect(len(confs)).Should(BeZero())
+			})
+		*/
 
 		It("should succefully update local FS location", func() {
 
@@ -127,7 +207,7 @@ var _ = Describe("data", func() {
 		It("should get configuration by Id", func() {
 			config, err := testDbMan.getConfigById("3ecd351c-1173-40bf-b830-c194e5ef9038")
 			Expect(err).Should(Succeed())
-			expectedResponse := &DataDeployment{
+			expectedResponse := &Configuration{
 				ID:             "3ecd351c-1173-40bf-b830-c194e5ef9038",
 				OrgID:          "73fcac6c-5d9f-44c1-8db0-333efda3e6e8",
 				EnvID:          "ada76573-68e3-4f1a-a0f9-cbc201a97e80",
@@ -151,44 +231,43 @@ var _ = Describe("data", func() {
 			Expect(err).ShouldNot(Succeed())
 		})
 
-		It("should successfully get all ready configurations", func() {
+		/*
+			XIt("should successfully get all ready configurations", func() {
 
-			err := testDbMan.updateLocalFsLocation(readyBlobId, testBlobLocalFsPrefix+readyBlobId)
-			Expect(err).Should(Succeed())
-			err = testDbMan.updateLocalFsLocation(readyResourceId, testBlobLocalFsPrefix+readyResourceId)
-			Expect(err).Should(Succeed())
+				err := testDbMan.updateLocalFsLocation(readyBlobId, testBlobLocalFsPrefix+readyBlobId)
+				Expect(err).Should(Succeed())
+				err = testDbMan.updateLocalFsLocation(readyResourceId, testBlobLocalFsPrefix+readyResourceId)
+				Expect(err).Should(Succeed())
 
-			deps, err := testDbMan.getReadyDeployments("")
-			Expect(err).Should(Succeed())
-			Expect(len(deps)).Should(Equal(2))
-			for _, dep := range deps {
-				Expect(dep.BlobID).Should(Equal(readyBlobId))
-				if dep.BlobResourceID != "" {
-					Expect(dep.BlobResourceID).Should(Equal(readyResourceId))
+				confs, err := testDbMan.getReadyConfigurations("")
+				Expect(err).Should(Succeed())
+				Expect(len(confs)).Should(Equal(2))
+				for _, conf := range confs {
+					Expect(conf.BlobID).Should(Equal(readyBlobId))
+					if conf.BlobResourceID != "" {
+						Expect(conf.BlobResourceID).Should(Equal(readyResourceId))
+					}
 				}
-			}
-		})
-
-		It("should get ready configurations by type filter", func() {
+			})
+		*/
+		It("should get all configurations by type filter", func() {
 
 			err := testDbMan.updateLocalFsLocation(readyBlobId, testBlobLocalFsPrefix+readyBlobId)
 			Expect(err).Should(Succeed())
 			err = testDbMan.updateLocalFsLocation(readyResourceId, testBlobLocalFsPrefix+readyResourceId)
 			Expect(err).Should(Succeed())
 
-			deps, err := testDbMan.getReadyDeployments("ORGANIZATION")
+			confs, err := testDbMan.getAllConfigurations("ORGANIZATION")
 			Expect(err).Should(Succeed())
-			Expect(len(deps)).Should(Equal(1))
-			Expect(deps[0].ID).Should(Equal("319963ff-217e-4ecc-8d6e-c3665e962d1e"))
+			Expect(len(confs)).Should(Equal(2))
 
-			deps, err = testDbMan.getReadyDeployments("ENVIRONMENT")
+			confs, err = testDbMan.getAllConfigurations("ENVIRONMENT")
 			Expect(err).Should(Succeed())
-			Expect(len(deps)).Should(Equal(1))
-			Expect(deps[0].ID).Should(Equal("1dc4895e-6494-4b59-979f-5f4c89c073b4"))
+			Expect(len(confs)).Should(Equal(4))
 
-			deps, err = testDbMan.getReadyDeployments("INVALID-TYPE")
+			confs, err = testDbMan.getAllConfigurations("INVALID-TYPE")
 			Expect(err).Should(Succeed())
-			Expect(len(deps)).Should(Equal(0))
+			Expect(len(confs)).Should(Equal(0))
 		})
 
 		It("should succefully get all unready blob ids", func() {
@@ -358,6 +437,17 @@ func initTestDb(db apid.DB) {
 		'defaultUser',
 		'ada76573-68e3-4f1a-a0f9-cbc201a97e80'
 		);
+	`)
+	Expect(err).Should(Succeed())
+	Expect(tx.Commit()).Should(Succeed())
+}
+
+func trancateTestMetadataTable(db apid.DB) {
+	tx, err := db.Begin()
+	Expect(err).Should(Succeed())
+	defer tx.Rollback()
+	_, err = tx.Exec(`
+		DELETE FROM metadata_runtime_entity_metadata;
 	`)
 	Expect(err).Should(Succeed())
 	Expect(tx.Commit()).Should(Succeed())

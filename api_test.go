@@ -24,7 +24,6 @@ import (
 	mathrand "math/rand"
 	"net/http"
 	"net/url"
-	"os"
 	"strconv"
 	"strings"
 	"time"
@@ -42,16 +41,16 @@ var _ = Describe("api", func() {
 
 	var _ = BeforeEach(func() {
 		testCount += 1
-		dummyDbMan = &dummyDbManager{}
+		dummyDbMan = &dummyDbManager{
+			lsn: "0.1.1",
+		}
 		testApiMan = &apiManager{
-			dbMan:                dummyDbMan,
-			deploymentsEndpoint:  deploymentsEndpoint + strconv.Itoa(testCount),
-			blobEndpoint:         blobEndpointPath + strconv.Itoa(testCount) + "/{blobId}",
-			deploymentIdEndpoint: deploymentsEndpoint + strconv.Itoa(testCount) + "/{configId}",
-			eTag:                 int64(testCount * 10),
-			deploymentsChanged:   make(chan interface{}, 5),
-			addSubscriber:        make(chan chan deploymentsResult),
-			removeSubscriber:     make(chan chan deploymentsResult),
+			dbMan: dummyDbMan,
+			configurationEndpoint:   configEndpoint + strconv.Itoa(testCount),
+			blobEndpoint:            blobEndpointPath + strconv.Itoa(testCount) + "/{blobId}",
+			configurationIdEndpoint: configEndpoint + strconv.Itoa(testCount) + "/{configId}",
+			newChangeListChan:       make(chan interface{}, 5),
+			addSubscriber:           make(chan chan interface{}),
 		}
 		testApiMan.InitAPI()
 		time.Sleep(100 * time.Millisecond)
@@ -65,7 +64,7 @@ var _ = Describe("api", func() {
 			// setup http client
 			uri, err := url.Parse(apiTestUrl)
 			Expect(err).Should(Succeed())
-			uri.Path = deploymentsEndpoint + strconv.Itoa(testCount)
+			uri.Path = configEndpoint + strconv.Itoa(testCount)
 
 			// http get
 			res, err := http.Get(uri.String())
@@ -74,16 +73,16 @@ var _ = Describe("api", func() {
 			Expect(res.StatusCode).Should(Equal(http.StatusOK))
 
 			// parse response
-			var depRes ApiDeploymentResponse
+			var depRes ApiConfigurationResponse
 			body, err := ioutil.ReadAll(res.Body)
 			Expect(err).Should(Succeed())
 			err = json.Unmarshal(body, &depRes)
 			Expect(err).Should(Succeed())
 
 			// verify response
-			Expect(len(depRes.ApiDeploymentsResponse)).To(Equal(0))
+			Expect(len(depRes.ApiConfigurationsResponse)).To(Equal(0))
 			Expect(depRes.Kind).Should(Equal(kindCollection))
-			Expect(depRes.Self).Should(Equal(apiTestUrl + deploymentsEndpoint + strconv.Itoa(testCount)))
+			Expect(depRes.Self).Should(Equal(apiTestUrl + configEndpoint + strconv.Itoa(testCount)))
 
 		})
 
@@ -91,7 +90,7 @@ var _ = Describe("api", func() {
 			// setup http client
 			uri, err := url.Parse(apiTestUrl)
 			Expect(err).Should(Succeed())
-			uri.Path = deploymentsEndpoint + strconv.Itoa(testCount)
+			uri.Path = configEndpoint + strconv.Itoa(testCount)
 
 			// set test data
 			details := setTestDeployments(dummyDbMan, uri.String())
@@ -103,7 +102,7 @@ var _ = Describe("api", func() {
 			Expect(res.StatusCode).Should(Equal(http.StatusOK))
 
 			// parse response
-			var depRes ApiDeploymentResponse
+			var depRes ApiConfigurationResponse
 			body, err := ioutil.ReadAll(res.Body)
 			Expect(err).Should(Succeed())
 			err = json.Unmarshal(body, &depRes)
@@ -112,7 +111,7 @@ var _ = Describe("api", func() {
 			// verify response
 			Expect(depRes.Kind).Should(Equal(kindCollection))
 			Expect(depRes.Self).Should(Equal(uri.String()))
-			Expect(depRes.ApiDeploymentsResponse).Should(Equal(details))
+			Expect(depRes.ApiConfigurationsResponse).Should(Equal(details))
 
 		})
 
@@ -121,12 +120,15 @@ var _ = Describe("api", func() {
 			// setup http client
 			uri, err := url.Parse(apiTestUrl)
 			Expect(err).Should(Succeed())
-			uri.Path = deploymentsEndpoint + strconv.Itoa(testCount)
-			uri.RawQuery = "type=" + typeFilter
+			uri.Path = configEndpoint + strconv.Itoa(testCount)
+
+			query := uri.Query()
+			query.Add("type", typeFilter)
+			uri.RawQuery = query.Encode()
 			// set test data
 			dep := makeTestDeployment()
 
-			dummyDbMan.configurations = make(map[string]*DataDeployment)
+			dummyDbMan.configurations = make(map[string]*Configuration)
 			dummyDbMan.configurations[typeFilter] = dep
 			detail := makeExpectedDetail(dep, strings.Split(uri.String(), "?")[0])
 
@@ -137,7 +139,7 @@ var _ = Describe("api", func() {
 			Expect(res.StatusCode).Should(Equal(http.StatusOK))
 
 			// parse response
-			var depRes ApiDeploymentResponse
+			var depRes ApiConfigurationResponse
 			body, err := ioutil.ReadAll(res.Body)
 			Expect(err).Should(Succeed())
 			err = json.Unmarshal(body, &depRes)
@@ -146,32 +148,73 @@ var _ = Describe("api", func() {
 			// verify response
 			Expect(depRes.Kind).Should(Equal(kindCollection))
 			Expect(depRes.Self).Should(Equal(uri.String()))
-			Expect(depRes.ApiDeploymentsResponse).Should(Equal([]ApiDeploymentDetails{*detail}))
+			Expect(depRes.ApiConfigurationsResponse).Should(Equal([]ApiConfigurationDetails{*detail}))
 
 		})
 
-		It("should get 304 for no change", func() {
-
+		It("should not long poll if using filter", func() {
+			typeFilter := "ORGANIZATION"
 			// setup http client
 			uri, err := url.Parse(apiTestUrl)
 			Expect(err).Should(Succeed())
-			uri.Path = deploymentsEndpoint + strconv.Itoa(testCount)
+			uri.Path = configEndpoint + strconv.Itoa(testCount)
 
+			query := uri.Query()
+			query.Add("type", typeFilter)
+			query.Add("block", "3")
+			query.Add(apidConfigIndexPar, dummyDbMan.lsn)
+			uri.RawQuery = query.Encode()
 			// set test data
-			setTestDeployments(dummyDbMan, uri.String())
+			dep := makeTestDeployment()
+
+			dummyDbMan.configurations = make(map[string]*Configuration)
+			dummyDbMan.configurations[typeFilter] = dep
+			detail := makeExpectedDetail(dep, strings.Split(uri.String(), "?")[0])
 
 			// http get
 			res, err := http.Get(uri.String())
 			Expect(err).Should(Succeed())
 			defer res.Body.Close()
 			Expect(res.StatusCode).Should(Equal(http.StatusOK))
-			etag := res.Header.Get("etag")
-			Expect(etag).ShouldNot(BeEmpty())
+
+			// parse response
+			var depRes ApiConfigurationResponse
+			body, err := ioutil.ReadAll(res.Body)
+			Expect(err).Should(Succeed())
+			err = json.Unmarshal(body, &depRes)
+			Expect(err).Should(Succeed())
+
+			// verify response
+			Expect(depRes.Kind).Should(Equal(kindCollection))
+			Expect(depRes.Self).Should(Equal(strings.Split(uri.String(), "?")[0] + "?type=" + typeFilter))
+			Expect(depRes.ApiConfigurationsResponse).Should(Equal([]ApiConfigurationDetails{*detail}))
+
+		}, 1)
+
+		It("should get 304 for no change", func() {
+
+			// setup http client
+			uri, err := url.Parse(apiTestUrl)
+			Expect(err).Should(Succeed())
+			uri.Path = configEndpoint + strconv.Itoa(testCount)
+
+			// set test data
+			setTestDeployments(dummyDbMan, uri.String())
+			// http get
+			res, err := http.Get(uri.String())
+			Expect(err).Should(Succeed())
+			defer res.Body.Close()
+			Expect(res.StatusCode).Should(Equal(http.StatusOK))
+			lsn := res.Header.Get(apidConfigIndexHeader)
+			Expect(lsn).ShouldNot(BeEmpty())
 
 			// send second request
+			query := uri.Query()
+			query.Add(apidConfigIndexPar, lsn)
+			uri.RawQuery = query.Encode()
+			log.Debug(uri.String())
 			req, err := http.NewRequest("GET", uri.String(), nil)
 			req.Header.Add("Content-Type", "application/json")
-			req.Header.Add("If-None-Match", etag)
 
 			// get response
 			res, err = http.DefaultClient.Do(req)
@@ -181,42 +224,111 @@ var _ = Describe("api", func() {
 		})
 
 		// block is not enabled now
-		XIt("should get empty set after blocking if no deployments", func() {
+		It("should do long-polling if Gateway_LSN>=APID_LSN, should get 304 for timeout", func() {
 
 			start := time.Now()
 
 			// setup http client
 			uri, err := url.Parse(apiTestUrl)
 			Expect(err).Should(Succeed())
-			uri.Path = deploymentsEndpoint + strconv.Itoa(testCount)
+			uri.Path = configEndpoint + strconv.Itoa(testCount)
 			query := uri.Query()
 			query.Add("block", "1")
+			query.Add(apidConfigIndexPar, "1.0.0")
 			uri.RawQuery = query.Encode()
 
 			// http get
 			res, err := http.Get(uri.String())
 			Expect(err).Should(Succeed())
 			defer res.Body.Close()
-			Expect(res.StatusCode).Should(Equal(http.StatusOK))
+			Expect(res.StatusCode).Should(Equal(http.StatusNotModified))
 
 			//verify blocking time
 			blockingTime := time.Since(start)
-			log.Warnf("time used: %v", blockingTime.Seconds())
 			Expect(blockingTime.Seconds() > 0.9).Should(BeTrue())
 
+		}, 2)
+
+		It("should do long-polling if Gateway_LSN>=APID_LSN, should get 200 if not timeout", func() {
+
+			testLSN := fmt.Sprintf("%d.%d.%d", testCount, testCount, testCount)
+			// setup http client
+			uri, err := url.Parse(apiTestUrl)
+			Expect(err).Should(Succeed())
+			uri.Path = configEndpoint + strconv.Itoa(testCount)
+			query := uri.Query()
+			query.Add("block", "2")
+			query.Add(apidConfigIndexPar, "1.0.0")
+			uri.RawQuery = query.Encode()
+			// set test data
+			details := setTestDeployments(dummyDbMan, strings.Split(uri.String(), "?")[0])
+
+			// notify change
+			go func() {
+				time.Sleep(time.Second)
+				dummyDbMan.lsn = testLSN
+				testApiMan.notifyNewChange()
+			}()
+
+			// http get
+			res, err := http.Get(uri.String())
+			Expect(err).Should(Succeed())
+			defer res.Body.Close()
+			Expect(res.StatusCode).Should(Equal(http.StatusOK))
+			Expect(res.Header.Get(apidConfigIndexHeader)).Should(Equal(testLSN))
 			// parse response
-			var depRes ApiDeploymentResponse
+			var depRes ApiConfigurationResponse
 			body, err := ioutil.ReadAll(res.Body)
 			Expect(err).Should(Succeed())
 			err = json.Unmarshal(body, &depRes)
 			Expect(err).Should(Succeed())
 
 			// verify response
-			Expect(len(depRes.ApiDeploymentsResponse)).To(Equal(0))
 			Expect(depRes.Kind).Should(Equal(kindCollection))
-			Expect(depRes.Self).Should(Equal(apiTestUrl + deploymentsEndpoint + strconv.Itoa(testCount)))
+			Expect(depRes.Self).Should(Equal(strings.Split(uri.String(), "?")[0]))
+			Expect(depRes.ApiConfigurationsResponse).Should(Equal(details))
+		}, 3)
 
-		}, 2)
+		It("should support long-polling for multiple subscribers", func() {
+
+			testLSN := fmt.Sprintf("%d.%d.%d", testCount, testCount, testCount)
+			// setup http client
+			uri, err := url.Parse(apiTestUrl)
+			Expect(err).Should(Succeed())
+			uri.Path = configEndpoint + strconv.Itoa(testCount)
+			query := uri.Query()
+			query.Add("block", "3")
+			query.Add(apidConfigIndexPar, dummyDbMan.lsn)
+			uri.RawQuery = query.Encode()
+
+			// set test data
+			setTestDeployments(dummyDbMan, strings.Split(uri.String(), "?")[0])
+
+			// http get
+			count := mathrand.Intn(20) + 5
+			finishChan := make(chan int)
+			for i := 0; i < count; i++ {
+				go func() {
+					defer GinkgoRecover()
+					res, err := http.Get(uri.String())
+					Expect(err).Should(Succeed())
+					defer res.Body.Close()
+					finishChan <- res.StatusCode
+				}()
+			}
+
+			// notify change
+			go func() {
+				time.Sleep(1500 * time.Millisecond)
+				dummyDbMan.lsn = testLSN
+				testApiMan.notifyNewChange()
+			}()
+
+			for i := 0; i < count; i++ {
+				Expect(<-finishChan).Should(Equal(http.StatusOK))
+			}
+
+		}, 5)
 
 		It("should get iso8601 time", func() {
 			testTimes := []string{"", "2017-04-05 04:47:36.462 +0000 UTC", "2017-04-05 04:47:36.462-07:00", "2017-04-05T04:47:36.462Z", "2017-04-05 23:23:38.162+00:00", "2017-06-22 16:41:02.334"}
@@ -225,7 +337,7 @@ var _ = Describe("api", func() {
 			// setup http client
 			uri, err := url.Parse(apiTestUrl)
 			Expect(err).Should(Succeed())
-			uri.Path = deploymentsEndpoint + strconv.Itoa(testCount)
+			uri.Path = configEndpoint + strconv.Itoa(testCount)
 
 			for i, t := range testTimes {
 				log.Debug("insert deployment with timestamp: " + t)
@@ -233,7 +345,7 @@ var _ = Describe("api", func() {
 				dep := makeTestDeployment()
 				dep.Created = t
 				dep.Updated = t
-				dummyDbMan.readyDeployments = []DataDeployment{*dep}
+				dummyDbMan.readyDeployments = []Configuration{*dep}
 				detail := makeExpectedDetail(dep, uri.String())
 				detail.Created = isoTime[i]
 				detail.Updated = isoTime[i]
@@ -243,39 +355,15 @@ var _ = Describe("api", func() {
 				defer res.Body.Close()
 				Expect(res.StatusCode).Should(Equal(http.StatusOK))
 				// parse response
-				var depRes ApiDeploymentResponse
+				var depRes ApiConfigurationResponse
 				body, err := ioutil.ReadAll(res.Body)
 				Expect(err).Should(Succeed())
 				err = json.Unmarshal(body, &depRes)
 				Expect(err).Should(Succeed())
 				// verify response
-				Expect(depRes.ApiDeploymentsResponse).Should(Equal([]ApiDeploymentDetails{*detail}))
+				Expect(depRes.ApiConfigurationsResponse).Should(Equal([]ApiConfigurationDetails{*detail}))
 
 			}
-		})
-
-		It("should debounce requests", func(done Done) {
-			var in = make(chan interface{})
-			var out = make(chan []interface{})
-
-			go testApiMan.debounce(in, out, 3*time.Millisecond)
-
-			go func() {
-				defer GinkgoRecover()
-
-				received, ok := <-out
-				Expect(ok).To(BeTrue())
-				Expect(len(received)).To(Equal(2))
-
-				close(in)
-				received, ok = <-out
-				Expect(ok).To(BeFalse())
-
-				close(done)
-			}()
-
-			in <- "x"
-			in <- "y"
 		})
 
 	})
@@ -315,12 +403,12 @@ var _ = Describe("api", func() {
 			// setup http client
 			uri, err := url.Parse(apiTestUrl)
 			Expect(err).Should(Succeed())
-			uri.Path = deploymentsEndpoint + strconv.Itoa(testCount) + "/3ecd351c-1173-40bf-b830-c194e5ef9038"
+			uri.Path = configEndpoint + strconv.Itoa(testCount) + "/3ecd351c-1173-40bf-b830-c194e5ef9038"
 
 			//setup test data
 			dummyDbMan.err = nil
-			dummyDbMan.configurations = make(map[string]*DataDeployment)
-			expectedConfig := &DataDeployment{
+			dummyDbMan.configurations = make(map[string]*Configuration)
+			expectedConfig := &Configuration{
 				ID:             "3ecd351c-1173-40bf-b830-c194e5ef9038",
 				OrgID:          "73fcac6c-5d9f-44c1-8db0-333efda3e6e8",
 				EnvID:          "ada76573-68e3-4f1a-a0f9-cbc201a97e80",
@@ -343,7 +431,7 @@ var _ = Describe("api", func() {
 			Expect(res.StatusCode).Should(Equal(http.StatusOK))
 
 			// parse response
-			var depRes ApiDeploymentDetails
+			var depRes ApiConfigurationDetails
 			body, err := ioutil.ReadAll(res.Body)
 			Expect(err).Should(Succeed())
 			err = json.Unmarshal(body, &depRes)
@@ -381,10 +469,10 @@ var _ = Describe("api", func() {
 				if data[1] != nil {
 					dummyDbMan.err = data[1].(error)
 				}
-				dummyDbMan.configurations = make(map[string]*DataDeployment)
-				dummyDbMan.configurations[data[0].(string)] = &DataDeployment{}
+				dummyDbMan.configurations = make(map[string]*Configuration)
+				dummyDbMan.configurations[data[0].(string)] = &Configuration{}
 				// http get
-				uri.Path = deploymentsEndpoint + strconv.Itoa(testCount) + "/" + data[0].(string)
+				uri.Path = configEndpoint + strconv.Itoa(testCount) + "/" + data[0].(string)
 				res, err := http.Get(uri.String())
 				Expect(err).Should(Succeed())
 				Expect(res.StatusCode).Should(Equal(expectedCode[i]))
@@ -395,12 +483,12 @@ var _ = Describe("api", func() {
 
 })
 
-func setTestDeployments(dummyDbMan *dummyDbManager, self string) []ApiDeploymentDetails {
+func setTestDeployments(dummyDbMan *dummyDbManager, self string) []ApiConfigurationDetails {
 
 	mathrand.Seed(time.Now().UnixNano())
 	count := mathrand.Intn(5) + 1
-	deployments := make([]DataDeployment, count)
-	details := make([]ApiDeploymentDetails, count)
+	deployments := make([]Configuration, count)
+	details := make([]ApiConfigurationDetails, count)
 
 	for i := 0; i < count; i++ {
 		dep := makeTestDeployment()
@@ -415,13 +503,13 @@ func setTestDeployments(dummyDbMan *dummyDbManager, self string) []ApiDeployment
 	return details
 }
 
-func makeTestDeployment() *DataDeployment {
-	dep := &DataDeployment{
+func makeTestDeployment() *Configuration {
+	dep := &Configuration{
 		ID:             util.GenerateUUID(),
 		OrgID:          util.GenerateUUID(),
 		EnvID:          util.GenerateUUID(),
-		BlobID:         testBlobId,
-		BlobResourceID: "",
+		BlobID:         util.GenerateUUID(), //testBlobId,
+		BlobResourceID: util.GenerateUUID(), //"",
 		Type:           "virtual-host",
 		Name:           "vh-secure",
 		Revision:       "1",
@@ -434,8 +522,8 @@ func makeTestDeployment() *DataDeployment {
 	return dep
 }
 
-func makeExpectedDetail(dep *DataDeployment, self string) *ApiDeploymentDetails {
-	detail := &ApiDeploymentDetails{
+func makeExpectedDetail(dep *Configuration, self string) *ApiConfigurationDetails {
+	detail := &ApiConfigurationDetails{
 		Self:            self + "/" + dep.ID,
 		Name:            dep.Name,
 		Type:            dep.Type,
@@ -443,61 +531,10 @@ func makeExpectedDetail(dep *DataDeployment, self string) *ApiDeploymentDetails 
 		BeanBlobUrl:     getBlobUrl(dep.BlobID),
 		Org:             dep.OrgID,
 		Env:             dep.EnvID,
-		ResourceBlobUrl: "",
+		ResourceBlobUrl: getBlobUrl(dep.BlobResourceID),
 		Path:            dep.Path,
 		Created:         dep.Created,
 		Updated:         dep.Updated,
 	}
 	return detail
-}
-
-type dummyDbManager struct {
-	unreadyBlobIds   []string
-	readyDeployments []DataDeployment
-	localFSLocation  string
-	fileResponse     chan string
-	version          string
-	configurations   map[string]*DataDeployment
-	err              error
-}
-
-func (d *dummyDbManager) setDbVersion(version string) {
-	d.version = version
-}
-
-func (d *dummyDbManager) initDb() error {
-	return nil
-}
-
-func (d *dummyDbManager) getUnreadyBlobs() ([]string, error) {
-	return d.unreadyBlobIds, nil
-}
-
-func (d *dummyDbManager) getReadyDeployments(typeFilter string) ([]DataDeployment, error) {
-	if typeFilter == "" {
-		return d.readyDeployments, nil
-	}
-	return []DataDeployment{*(d.configurations[typeFilter])}, nil
-}
-
-func (d *dummyDbManager) updateLocalFsLocation(blobId, localFsLocation string) error {
-	file, err := os.Open(localFsLocation)
-	if err != nil {
-		return err
-	}
-	buff := make([]byte, 36)
-	_, err = file.Read(buff)
-	if err != nil {
-		return err
-	}
-	d.fileResponse <- string(buff)
-	return nil
-}
-
-func (d *dummyDbManager) getLocalFSLocation(string) (string, error) {
-	return d.localFSLocation, nil
-}
-
-func (d *dummyDbManager) getConfigById(id string) (*DataDeployment, error) {
-	return d.configurations[id], d.err
 }

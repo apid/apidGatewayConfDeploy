@@ -26,24 +26,24 @@ import (
 )
 
 const (
-	configProtocol                   = "protocol_type"
-	configAPIListen                  = "api_listen"
-	configBundleBlobDownloadEndpoint = "gatewaydeploy_bundle_download_endpoint"
-	configBundleDirKey               = "gatewaydeploy_bundle_dir"
-	configDebounceDuration           = "gatewaydeploy_debounce_duration"
-	configBundleCleanupDelay         = "gatewaydeploy_bundle_cleanup_delay"
-	configMarkDeployFailedAfter      = "gatewaydeploy_deployment_timeout"
-	configDownloadConnTimeout        = "gatewaydeploy_download_connection_timeout"
-	configApiServerBaseURI           = "apigeesync_proxy_server_base"
-	configApidInstanceID             = "apigeesync_apid_instance_id"
-	configApidClusterID              = "apigeesync_cluster_id"
-	configConcurrentDownloads        = "apigeesync_concurrent_downloads"
-	configDownloadQueueSize          = "apigeesync_download_queue_size"
-	configBlobServerBaseURI          = "apigeesync_blob_server_base"
-	configStoragePath                = "local_storage_path"
-	maxIdleConnsPerHost              = 50
-	httpTimeout                      = time.Minute
-	configBearerToken                = "apigeesync_bearer_token"
+	configProtocol              = "protocol_type"
+	configAPIListen             = "api_listen"
+	configBlobDownloadEndpoint  = "gatewaydeploy_bundle_download_endpoint"
+	configBlobDirKey            = "gatewaydeploy_bundle_dir"
+	configDebounceDuration      = "gatewaydeploy_debounce_duration"
+	configBlobCleanupDelay      = "gatewaydeploy_bundle_cleanup_delay"
+	configMarkDeployFailedAfter = "gatewaydeploy_deployment_timeout"
+	configDownloadConnTimeout   = "gatewaydeploy_download_connection_timeout"
+	configApiServerBaseURI      = "apigeesync_proxy_server_base"
+	configApidInstanceID        = "apigeesync_apid_instance_id"
+	configApidClusterID         = "apigeesync_cluster_id"
+	configConcurrentDownloads   = "apigeesync_concurrent_downloads"
+	configDownloadQueueSize     = "apigeesync_download_queue_size"
+	configBlobServerBaseURI     = "apigeesync_blob_server_base"
+	configStoragePath           = "local_storage_path"
+	maxIdleConnsPerHost         = 50
+	httpTimeout                 = time.Minute
+	configBearerToken           = "apigeesync_bearer_token"
 )
 
 var (
@@ -81,9 +81,9 @@ func initPlugin(s apid.Services) (apid.PluginData, error) {
 		return pluginData, fmt.Errorf("%s value %s parse err: %v", configApiServerBaseURI, apiServerBaseURI, err)
 	}
 
-	config.SetDefault(configBundleDirKey, "bundles")
+	config.SetDefault(configBlobDirKey, "bundles")
 	config.SetDefault(configDebounceDuration, time.Second)
-	config.SetDefault(configBundleCleanupDelay, time.Minute)
+	config.SetDefault(configBlobCleanupDelay, time.Minute)
 	config.SetDefault(configMarkDeployFailedAfter, 5*time.Minute)
 	config.SetDefault(configDownloadConnTimeout, 5*time.Minute)
 	config.SetDefault(configConcurrentDownloads, 15)
@@ -94,9 +94,9 @@ func initPlugin(s apid.Services) (apid.PluginData, error) {
 		return pluginData, fmt.Errorf("%s must be a positive duration", configDebounceDuration)
 	}
 
-	bundleCleanupDelay := config.GetDuration(configBundleCleanupDelay)
+	bundleCleanupDelay := config.GetDuration(configBlobCleanupDelay)
 	if bundleCleanupDelay < time.Millisecond {
-		return pluginData, fmt.Errorf("%s must be a positive duration", configBundleCleanupDelay)
+		return pluginData, fmt.Errorf("%s must be a positive duration", configBlobCleanupDelay)
 	}
 
 	markDeploymentFailedAfter := config.GetDuration(configMarkDeployFailedAfter)
@@ -133,21 +133,19 @@ func initPlugin(s apid.Services) (apid.PluginData, error) {
 	// initialize api manager
 
 	apiMan := &apiManager{
-		dbMan:                dbMan,
-		deploymentsEndpoint:  deploymentsEndpoint,
-		blobEndpoint:         blobEndpoint,
-		deploymentIdEndpoint: deploymentIdEndpoint,
-		eTag:                 0,
-		deploymentsChanged:   make(chan interface{}, 5),
-		addSubscriber:        make(chan chan deploymentsResult),
-		removeSubscriber:     make(chan chan deploymentsResult),
-		apiInitialized:       false,
+		dbMan: dbMan,
+		configurationEndpoint:   configEndpoint,
+		blobEndpoint:            blobEndpoint,
+		configurationIdEndpoint: configIdEndpoint,
+		newChangeListChan:       make(chan interface{}, 5),
+		addSubscriber:           make(chan chan interface{}, 100),
+		apiInitialized:          false,
 	}
 
 	// initialize bundle manager
 
 	blobServerURL := config.GetString(configBlobServerBaseURI)
-	relativeBundlePath := config.GetString(configBundleDirKey)
+	relativeBundlePath := config.GetString(configBlobDirKey)
 	storagePath := config.GetString(configStoragePath)
 	bundlePath = path.Join(storagePath, relativeBundlePath)
 	if err := os.MkdirAll(bundlePath, 0700); err != nil {
@@ -157,22 +155,19 @@ func initPlugin(s apid.Services) (apid.PluginData, error) {
 	concurrentDownloads := config.GetInt(configConcurrentDownloads)
 	downloadQueueSize := config.GetInt(configDownloadQueueSize)
 	bundleMan := &bundleManager{
-		blobServerUrl:             blobServerURL,
-		dbMan:                     dbMan,
-		apiMan:                    apiMan,
-		concurrentDownloads:       concurrentDownloads,
-		markDeploymentFailedAfter: markDeploymentFailedAfter,
-		bundleRetryDelay:          time.Second,
-		bundleCleanupDelay:        bundleCleanupDelay,
-		downloadQueue:             make(chan *DownloadRequest, downloadQueueSize),
-		isClosed:                  new(int32),
-		client:                    httpClient,
+		blobServerUrl:         blobServerURL,
+		dbMan:                 dbMan,
+		apiMan:                apiMan,
+		concurrentDownloads:   concurrentDownloads,
+		markConfigFailedAfter: markDeploymentFailedAfter,
+		bundleRetryDelay:      time.Second,
+		bundleCleanupDelay:    bundleCleanupDelay,
+		downloadQueue:         make(chan *DownloadRequest, downloadQueueSize),
+		isClosed:              new(int32),
+		client:                httpClient,
 	}
 
 	bundleMan.initializeBundleDownloading()
-
-	//TODO initialize apiMan.distributeEvents() for api call with "block"
-	//go apiMan.distributeEvents()
 
 	// initialize event handler
 	eventHandler = &apigeeSyncHandler{

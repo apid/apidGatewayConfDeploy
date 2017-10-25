@@ -11,5 +11,15 @@ as well.
 
 ## Functional description
 
-see the file [swagger.yaml](swagger.yaml).
+###Configurations
+* Gateway cant call "/configurations" to fetch configurations.
+* "type" filter is supported.
+* Long-polling is supported.
+* A configuration can be fetched by id "/configurations/{configId}"
+
+###Blobs
+* A blob can be downloaded by id "/blobs/{blobId}"
+
+
+For details, check the file [apidGatewayConfDeploy-api.yaml](swagger.yaml).
 

@@ -22,7 +22,6 @@ import (
 	. "github.com/onsi/ginkgo"
 	. "github.com/onsi/gomega"
 	"math/rand"
-	"reflect"
 	"time"
 )
 
@@ -31,17 +30,19 @@ var _ = Describe("listener", func() {
 	var dummyApiMan *dummyApiManager
 	var dummyBundleMan *dummyBundleManager
 	var testHandler *apigeeSyncHandler
+	var testCount int
 	var _ = BeforeEach(func() {
+		testCount += 1
 		// stop handler created by initPlugin()
 		eventHandler.stopListener(services)
 
-		dummyApiMan = &dummyApiManager{}
+		dummyApiMan = &dummyApiManager{
+			notifyChan: make(chan bool, 1),
+			initCalled: make(chan bool),
+		}
 		dummyDbMan = &dummyDbManager{}
 		dummyBundleMan = &dummyBundleManager{
-			requestChan: make(chan *DownloadRequest),
-			depChan:     make(chan *DataDeployment),
-			delChan:     make(chan *DataDeployment),
-			delBlobChan: make(chan string),
+			blobChan: make(chan string),
 		}
 		testHandler = &apigeeSyncHandler{
 			dbMan:     dummyDbMan,
@@ -73,11 +74,11 @@ var _ = Describe("listener", func() {
 				SnapshotInfo: fmt.Sprint(rand.Uint32()),
 			}
 
-			apid.Events().Emit(APIGEE_SYNC_EVENT, snapshot)
+			<-apid.Events().Emit(APIGEE_SYNC_EVENT, snapshot)
 
 			for i := 0; i < len(unreadyBlobIds); i++ {
-				req := <-dummyBundleMan.requestChan
-				blobMap[req.blobId]++
+				id := <-dummyBundleMan.blobChan
+				blobMap[id]++
 			}
 
 			// verify all unready blobids are enqueued
@@ -86,7 +87,7 @@ var _ = Describe("listener", func() {
 			}
 		})
 
-		It("Snapshot events should set db version, and should only init API endpoint once", func() {
+		It("Snapshot events should set db version", func() {
 
 			// emit snapshot
 			for i := 0; i < 2+rand.Intn(5); i++ {
@@ -97,11 +98,42 @@ var _ = Describe("listener", func() {
 				<-apid.Events().Emit(APIGEE_SYNC_EVENT, snapshot)
 				Expect(dummyDbMan.version).Should(Equal(version))
 			}
-
-			// verify init API called
-			Expect(dummyApiMan.initCalled).Should(BeTrue())
 		})
 
+		It("Snapshot event should init API endpoint and notify long-polling", func() {
+
+			// emit snapshot
+			version := fmt.Sprint(rand.Uint32())
+			snapshot := &common.Snapshot{
+				SnapshotInfo: version,
+			}
+			<-apid.Events().Emit(APIGEE_SYNC_EVENT, snapshot)
+			Expect(dummyDbMan.version).Should(Equal(version))
+			Expect(<-dummyApiMan.initCalled).Should(BeTrue())
+			Expect(<-dummyApiMan.notifyChan).Should(BeTrue())
+		})
+
+		It("Should load LSN when apid starts", func() {
+			dummyDbMan.dbLSN = fmt.Sprintf("%d.%d.%d", testCount, testCount, testCount)
+			// emit snapshot
+			version := fmt.Sprint(rand.Uint32())
+			snapshot := &common.Snapshot{
+				SnapshotInfo: version,
+			}
+			<-apid.Events().Emit(APIGEE_SYNC_EVENT, snapshot)
+			Expect(dummyDbMan.getLSN()).Should(Equal(dummyDbMan.dbLSN))
+		})
+
+		It("Should store LSN when receiving snapshot at runtime", func() {
+			dummyDbMan.lsn = fmt.Sprintf("%d.%d.%d", testCount, testCount, testCount)
+			// emit snapshot
+			version := fmt.Sprint(rand.Uint32())
+			snapshot := &common.Snapshot{
+				SnapshotInfo: version,
+			}
+			<-apid.Events().Emit(APIGEE_SYNC_EVENT, snapshot)
+			Expect(dummyDbMan.getLSN()).Should(Equal(dummyDbMan.dbLSN))
+		})
 	})
 
 	Context("Change list", func() {
@@ -109,7 +141,7 @@ var _ = Describe("listener", func() {
 		It("Insert event should enqueue download requests for all inserted deployments", func() {
 			// emit change event
 			changes := make([]common.Change, 0)
-			deployments := make(map[string]DataDeployment)
+			blobs := make(map[string]int)
 			for i := 0; i < 1+rand.Intn(10); i++ {
 				dep := makeTestDeployment()
 				change := common.Change{
@@ -118,25 +150,25 @@ var _ = Describe("listener", func() {
 					NewRow:    rowFromDeployment(dep),
 				}
 				changes = append(changes, change)
-				deployments[dep.ID] = *dep
+				blobs[dep.BlobID]++
+				blobs[dep.BlobResourceID]++
 			}
 
 			changeList := &common.ChangeList{
 				Changes: changes,
 			}
 
-			apid.Events().Emit(APIGEE_SYNC_EVENT, changeList)
+			<-apid.Events().Emit(APIGEE_SYNC_EVENT, changeList)
 
 			// verify
-			for i := 0; i < len(changes); i++ {
-				dep := <-dummyBundleMan.depChan
-				Expect(reflect.DeepEqual(deployments[dep.ID], *dep)).Should(BeTrue())
-				delete(deployments, dep.ID)
+			for i := 0; i < 2*len(changes); i++ {
+				blobId := <-dummyBundleMan.blobChan
+				blobs[blobId]++
+				Expect(blobs[blobId]).Should(Equal(2))
 			}
-			Expect(len(deployments)).Should(BeZero())
 		})
 
-		It("Delete event should deliver to the bundle manager", func() {
+		XIt("Delete event should deliver to the bundle manager", func() {
 			// emit change event
 			changes := make([]common.Change, 0)
 			deployments := make(map[string]bool)
@@ -155,169 +187,137 @@ var _ = Describe("listener", func() {
 				Changes: changes,
 			}
 
-			apid.Events().Emit(APIGEE_SYNC_EVENT, changeList)
+			<-apid.Events().Emit(APIGEE_SYNC_EVENT, changeList)
 
 			// verify
 			for i := 0; i < len(changes); i++ {
-				dep := <-dummyBundleMan.delChan
-				Expect(deployments[dep.ID]).Should(BeTrue())
-				delete(deployments, dep.ID)
 			}
 			Expect(len(deployments)).Should(BeZero())
 		})
 
-		It("Update event should enqueue download requests and delete old blobs", func() {
+		It("Update event should enqueue download requests", func() {
 
 			changes := make([]common.Change, 0)
-			blobIdNew := make(map[string]int)
-			blobIdOld := make(map[string]int)
+			blobsNew := make(map[string]int)
 			for i := 0; i < 1+rand.Intn(10); i++ {
-				depNew := makeTestDeployment()
-				depNew.BlobID = util.GenerateUUID()
-				depNew.BlobResourceID = util.GenerateUUID()
+				confNew := makeTestDeployment()
+				confNew.BlobID = util.GenerateUUID()
+				confNew.BlobResourceID = util.GenerateUUID()
 
-				depOld := makeTestDeployment()
-				depOld.BlobID = util.GenerateUUID()
-				depOld.BlobResourceID = util.GenerateUUID()
+				confOld := makeTestDeployment()
+				confOld.BlobID = util.GenerateUUID()
+				confOld.BlobResourceID = util.GenerateUUID()
 
 				change := common.Change{
 					Operation: common.Update,
 					Table:     CONFIG_METADATA_TABLE,
-					NewRow:    rowFromDeployment(depNew),
-					OldRow:    rowFromDeployment(depOld),
+					NewRow:    rowFromDeployment(confNew),
+					OldRow:    rowFromDeployment(confOld),
 				}
 				changes = append(changes, change)
 
-				blobIdNew[depNew.BlobID]++
-				blobIdNew[depNew.BlobResourceID]++
-				blobIdOld[depOld.BlobID]++
-				blobIdOld[depOld.BlobResourceID]++
+				blobsNew[confNew.BlobID]++
+				blobsNew[confNew.BlobResourceID]++
 			}
+			testLSN := "1.1.1"
 
 			// emit change event
 			changeList := &common.ChangeList{
-				Changes: changes,
+				Changes:      changes,
+				LastSequence: testLSN,
 			}
 
-			apid.Events().Emit(APIGEE_SYNC_EVENT, changeList)
+			<-apid.Events().Emit(APIGEE_SYNC_EVENT, changeList)
 
 			// verify
-			for i := 0; i < len(blobIdNew); i++ {
-				req := <-dummyBundleMan.requestChan
-				blobIdNew[req.blobId]++
-				Expect(blobIdNew[req.blobId]).Should(Equal(2))
-			}
-			for i := 0; i < len(blobIdOld); i++ {
-				blobId := <-dummyBundleMan.delBlobChan
-				blobIdOld[blobId]++
-				Expect(blobIdOld[blobId]).Should(Equal(2))
+			for i := 0; i < 2*len(changes); i++ {
+				blobId := <-dummyBundleMan.blobChan
+				blobsNew[blobId]++
+				Expect(blobsNew[blobId]).Should(Equal(2))
 			}
 
 		})
+	})
 
-		It("Update event should only download/delete changed blobs", func() {
+	Context("LSN", func() {
+
+		var _ = BeforeEach(func() {
+			dummyDbMan.lsn = "0.0.1"
+		})
+
+		It("changelist with CONFIG_METADATA_TABLE should update apidLSN", func() {
+			// emit change event
 			changes := make([]common.Change, 0)
-			blobIdChangedNew := make(map[string]int)
-			blobIdChangedOld := make(map[string]int)
-
+			deployments := make(map[string]Configuration)
+			testLSN := fmt.Sprintf("%d.%d.%d", testCount, testCount, testCount)
 			for i := 0; i < 1+rand.Intn(10); i++ {
-				depNew := makeTestDeployment()
-				depNew.BlobID = util.GenerateUUID()
-				depNew.BlobResourceID = util.GenerateUUID()
-
-				depOld := makeTestDeployment()
-
-				if rand.Intn(2) == 0 {
-					// blob id changed
-					depOld.BlobID = util.GenerateUUID()
-					blobIdChangedNew[depNew.BlobID]++
-					blobIdChangedOld[depOld.BlobID]++
-				} else {
-					// blob id unchanged
-					depOld.BlobID = depNew.BlobID
-				}
-
-				if rand.Intn(2) == 0 {
-					// blob id changed
-					depOld.BlobResourceID = util.GenerateUUID()
-					blobIdChangedNew[depNew.BlobResourceID]++
-					blobIdChangedOld[depOld.BlobResourceID]++
-				} else {
-					// blob id unchanged
-					depOld.BlobResourceID = depNew.BlobResourceID
-				}
-
+				dep := makeTestDeployment()
 				change := common.Change{
-					Operation: common.Update,
+					Operation: common.Insert,
 					Table:     CONFIG_METADATA_TABLE,
-					NewRow:    rowFromDeployment(depNew),
-					OldRow:    rowFromDeployment(depOld),
+					NewRow:    rowFromDeployment(dep),
 				}
 				changes = append(changes, change)
+				deployments[dep.ID] = *dep
 			}
 
+			changeList := &common.ChangeList{
+				Changes:      changes,
+				LastSequence: testLSN,
+			}
+
+			<-apid.Events().Emit(APIGEE_SYNC_EVENT, changeList)
+			for i := 0; i < 2*len(changes); i++ {
+				<-dummyBundleMan.blobChan
+			}
+			Expect(dummyDbMan.getLSN()).Should(Equal(testLSN))
+
+		})
+
+		It("changelist without CONFIG_METADATA_TABLE shouldn't update apidLSN", func() {
+			testLSN := fmt.Sprintf("%d.%d.%d", testCount, testCount, testCount)
+			dummyDbMan.lsn = testLSN
+			// emit change event
+			changes := make([]common.Change, 0)
+			deployments := make(map[string]Configuration)
+			for i := 0; i < 1+rand.Intn(10); i++ {
+				dep := makeTestDeployment()
+				change := common.Change{
+					Operation: common.Insert,
+					Table:     "somewhat-table",
+					NewRow:    rowFromDeployment(dep),
+				}
+				changes = append(changes, change)
+				deployments[dep.ID] = *dep
+			}
+
+			changeList := &common.ChangeList{
+				Changes:      changes,
+				LastSequence: "aaa.aaa.aaa",
+			}
+
+			<-apid.Events().Emit(APIGEE_SYNC_EVENT, changeList)
+			Expect(dummyDbMan.getLSN()).Should(Equal(testLSN))
+
+		})
+
+		It("changelist should always update apidLSN if it has init value", func() {
+			testLSN := fmt.Sprintf("%d.%d.%d", testCount, testCount, testCount)
+			dummyDbMan.lsn = InitLSN
 			// emit change event
 			changeList := &common.ChangeList{
-				Changes: changes,
+				Changes:      nil,
+				LastSequence: testLSN,
 			}
 
-			apid.Events().Emit(APIGEE_SYNC_EVENT, changeList)
+			<-apid.Events().Emit(APIGEE_SYNC_EVENT, changeList)
+			Expect(dummyDbMan.getLSN()).Should(Equal(testLSN))
 
-			// verify
-			for i := 0; i < len(blobIdChangedNew); i++ {
-				req := <-dummyBundleMan.requestChan
-				blobIdChangedNew[req.blobId]++
-				Expect(blobIdChangedNew[req.blobId]).Should(Equal(2))
-			}
-			for i := 0; i < len(blobIdChangedOld); i++ {
-				blobId := <-dummyBundleMan.delBlobChan
-				blobIdChangedOld[blobId]++
-				Expect(blobIdChangedOld[blobId]).Should(Equal(2))
-			}
 		})
 	})
 })
 
-type dummyBundleManager struct {
-	requestChan chan *DownloadRequest
-	depChan     chan *DataDeployment
-	delChan     chan *DataDeployment
-	delBlobChan chan string
-}
-
-func (bm *dummyBundleManager) initializeBundleDownloading() {
-
-}
-
-func (bm *dummyBundleManager) queueDownloadRequest(dep *DataDeployment) {
-	bm.depChan <- dep
-}
-
-func (bm *dummyBundleManager) enqueueRequest(req *DownloadRequest) {
-	bm.requestChan <- req
-}
-
-func (bm *dummyBundleManager) makeDownloadRequest(blobId string) *DownloadRequest {
-	return &DownloadRequest{
-		blobId: blobId,
-	}
-}
-
-func (bm *dummyBundleManager) deleteBundlesFromDeployments(deployments []DataDeployment) {
-	for i := range deployments {
-		bm.delChan <- &deployments[i]
-	}
-}
-
-func (bm *dummyBundleManager) deleteBundleById(blobId string) {
-	bm.delBlobChan <- blobId
-}
-
-func (bm *dummyBundleManager) Close() {
-
-}
-
-func rowFromDeployment(dep *DataDeployment) common.Row {
+func rowFromDeployment(dep *Configuration) common.Row {
 	row := common.Row{}
 	row["id"] = &common.ColumnVal{Value: dep.ID}
 	row["organization_id"] = &common.ColumnVal{Value: dep.OrgID}

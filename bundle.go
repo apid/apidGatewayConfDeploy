@@ -34,26 +34,23 @@ const (
 
 type bundleManagerInterface interface {
 	initializeBundleDownloading()
-	queueDownloadRequest(*DataDeployment)
-	enqueueRequest(*DownloadRequest)
-	makeDownloadRequest(string) *DownloadRequest
-	deleteBundlesFromDeployments([]DataDeployment)
-	deleteBundleById(string)
+	downloadBlobsWithCallback(blobs []string, callback func())
+	deleteBlobs(blobIds []string)
 	Close()
 }
 
 type bundleManager struct {
-	blobServerUrl             string
-	dbMan                     dbManagerInterface
-	apiMan                    apiManagerInterface
-	concurrentDownloads       int
-	markDeploymentFailedAfter time.Duration
-	bundleRetryDelay          time.Duration
-	bundleCleanupDelay        time.Duration
-	downloadQueue             chan *DownloadRequest
-	isClosed                  *int32
-	workers                   []*BundleDownloader
-	client                    *http.Client
+	blobServerUrl         string
+	dbMan                 dbManagerInterface
+	apiMan                apiManagerInterface
+	concurrentDownloads   int
+	markConfigFailedAfter time.Duration
+	bundleRetryDelay      time.Duration
+	bundleCleanupDelay    time.Duration
+	downloadQueue         chan *DownloadRequest
+	isClosed              *int32
+	workers               []*BundleDownloader
+	client                *http.Client
 }
 
 type blobServerResponse struct {
@@ -80,30 +77,22 @@ func (bm *bundleManager) initializeBundleDownloading() {
 	}
 }
 
-// download bundle blob and resource blob
-// TODO do not download duplicate blobs
-func (bm *bundleManager) queueDownloadRequest(dep *DataDeployment) {
-	blobReq := bm.makeDownloadRequest(dep.BlobID)
-	resourceReq := bm.makeDownloadRequest(dep.BlobResourceID)
-
-	go func() {
-		bm.enqueueRequest(blobReq)
-		bm.enqueueRequest(resourceReq)
-	}()
-}
-
-func (bm *bundleManager) makeDownloadRequest(id string) *DownloadRequest {
-	markFailedAt := time.Now().Add(bm.markDeploymentFailedAfter)
+func (bm *bundleManager) makeDownloadRequest(blobId string, b *BunchDownloadRequest) *DownloadRequest {
+	if blobId == "" {
+		return nil
+	}
+	markFailedAt := time.Now().Add(bm.markConfigFailedAfter)
 	retryIn := bm.bundleRetryDelay
 	maxBackOff := 5 * time.Minute
 
 	return &DownloadRequest{
 		blobServerURL: bm.blobServerUrl,
 		bm:            bm,
-		blobId:        id,
+		blobId:        blobId,
 		backoffFunc:   createBackoff(retryIn, maxBackOff),
 		markFailedAt:  markFailedAt,
 		client:        bm.client,
+		bunchRequest:  b,
 	}
 }
 
@@ -112,14 +101,20 @@ func (bm *bundleManager) enqueueRequest(r *DownloadRequest) {
 	if atomic.LoadInt32(bm.isClosed) == 1 {
 		return
 	}
-	/*
-		defer func() {
-			if r := recover(); r != nil {
-				log.Warn("trying to enque requests to closed bundleManager")
-			}
-		}()
-	*/
-	bm.downloadQueue <- r
+	if r != nil {
+		bm.downloadQueue <- r
+	}
+}
+
+func (bm *bundleManager) downloadBlobsWithCallback(blobs []string, callback func()) {
+
+	c := &BunchDownloadRequest{
+		bm:             bm,
+		blobs:          blobs,
+		attemptCounter: new(int32),
+		callback:       callback,
+	}
+	c.download()
 }
 
 func (bm *bundleManager) Close() {
@@ -127,30 +122,51 @@ func (bm *bundleManager) Close() {
 	close(bm.downloadQueue)
 }
 
-func (bm *bundleManager) deleteBundlesFromDeployments(deletedDeployments []DataDeployment) {
-	for _, dep := range deletedDeployments {
-		go bm.deleteBundleById(dep.BlobID)
-		go bm.deleteBundleById(dep.BlobResourceID)
+func (bm *bundleManager) deleteBlobs(blobs []string) {
+	for _, id := range blobs {
+		go bm.deleteBlobById(id)
 	}
-
-	/*
-		log.Debugf("will delete %d old bundles", len(deletedDeployments))
-		go func() {
-			// give clients a minute to avoid conflicts
-			time.Sleep(bm.bundleCleanupDelay)
-			for _, dep := range deletedDeployments {
-				bundleFile := getBlobFilePath(dep.BlobID)
-				log.Debugf("removing old bundle: %v", bundleFile)
-				// TODO Remove from the Database table apid_blob_available
-				safeDelete(bundleFile)
-			}
-		}()
-	*/
 }
 
 // TODO add delete support
-func (bm *bundleManager) deleteBundleById(blobId string) {
+func (bm *bundleManager) deleteBlobById(blobId string) {
 
+}
+
+type BunchDownloadRequest struct {
+	bm             *bundleManager
+	blobs          []string
+	attemptCounter *int32
+	callback       func()
+}
+
+func (b *BunchDownloadRequest) download() {
+	//remove empty Ids
+	var ids []string
+	for _, id := range b.blobs {
+		if id != "" {
+			ids = append(ids, id)
+		}
+	}
+	b.blobs = ids
+	log.Debugf("Attempt to download blobs, len: %v", len(b.blobs))
+
+	if len(b.blobs) == 0 && b.callback != nil {
+		go b.callback()
+		return
+	}
+
+	*b.attemptCounter = int32(len(b.blobs))
+	for _, id := range b.blobs {
+		req := b.bm.makeDownloadRequest(id, b)
+		go b.bm.enqueueRequest(req)
+	}
+}
+
+func (b *BunchDownloadRequest) downloadAttempted() {
+	if atomic.AddInt32(b.attemptCounter, -1) == 0 && b.callback != nil {
+		go b.callback()
+	}
 }
 
 type DownloadRequest struct {
@@ -160,12 +176,15 @@ type DownloadRequest struct {
 	markFailedAt  time.Time
 	blobServerURL string
 	client        *http.Client
+	bunchRequest  *BunchDownloadRequest
+	attempted     bool
 }
 
-func (r *DownloadRequest) downloadBundle() error {
+func (r *DownloadRequest) downloadBlob() error {
 
 	log.Debugf("starting bundle download attempt for blobId=%s", r.blobId)
-
+	var err error
+	defer r.markAttempted(&err)
 	if r.checkTimeout() {
 		return &timeoutError{
 			markFailedAt: r.markFailedAt,
@@ -188,8 +207,6 @@ func (r *DownloadRequest) downloadBundle() error {
 		return err
 	}
 
-	log.Debugf("blod downloaded. blobid=%s  filepath=%s", r.blobId, downloadedFile)
-
 	err = r.bm.dbMan.updateLocalFsLocation(r.blobId, downloadedFile)
 	if err != nil {
 		log.Errorf("updateLocalFsLocation failed: blobId=%s", r.blobId)
@@ -199,10 +216,7 @@ func (r *DownloadRequest) downloadBundle() error {
 		return err
 	}
 
-	log.Debugf("bundle downloaded: blobId=%s filename=%s", r.blobId, downloadedFile)
-
-	// TODO send changed deployments to subscribers (API call with "block")
-	//r.bm.apiMan.addChangedDeployment(dep.ID)
+	log.Debugf("blod downloaded and inserted: blobId=%s filename=%s", r.blobId, downloadedFile)
 
 	return nil
 }
@@ -216,6 +230,19 @@ func (r *DownloadRequest) checkTimeout() bool {
 		return true
 	}
 	return false
+}
+
+func (r *DownloadRequest) markAttempted(errp *error) {
+	if !r.attempted {
+		r.attempted = true
+		err := *errp
+		if r.bunchRequest != nil {
+			r.bunchRequest.downloadAttempted()
+		}
+		if err != nil {
+			//TODO: insert to DB as "attempted but unsuccessful"
+		}
+	}
 }
 
 func getBlobFilePath(blobId string) string {
@@ -263,7 +290,6 @@ func getSignedURL(client *http.Client, blobServerURL string, blobId string) (str
 func downloadFromURI(client *http.Client, blobServerURL string, blobId string) (tempFileName string, err error) {
 
 	var tempFile *os.File
-	log.Debugf("Downloading bundle: %s", blobId)
 
 	uri, err := getSignedURL(client, blobServerURL, blobId)
 	if err != nil {
@@ -282,18 +308,18 @@ func downloadFromURI(client *http.Client, blobServerURL string, blobId string) (
 	var confReader io.ReadCloser
 	confReader, err = getUriReaderWithAuth(client, uri)
 	if err != nil {
-		log.Errorf("Unable to retrieve bundle %s: %v", uri, err)
+		log.Errorf("Unable to retrieve Blob %s: %v", uri, err)
 		return
 	}
 	defer confReader.Close()
 
 	_, err = io.Copy(tempFile, confReader)
 	if err != nil {
-		log.Errorf("Unable to write bundle %s: %v", tempFileName, err)
+		log.Errorf("Unable to write Blob %s: %v", tempFileName, err)
 		return
 	}
 
-	log.Debugf("Bundle %s downloaded to: %s", uri, tempFileName)
+	log.Debugf("Blob %s downloaded to: %s", uri, tempFileName)
 	return
 }
 
@@ -328,7 +354,7 @@ func (w *BundleDownloader) Start() {
 
 		for req := range w.bm.downloadQueue {
 			log.Debugf("starting download blobId=%s", req.blobId)
-			err := req.downloadBundle()
+			err := req.downloadBlob()
 			if err != nil {
 				// timeout
 				if _, ok := err.(*timeoutError); ok {
