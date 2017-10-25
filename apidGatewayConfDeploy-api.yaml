@@ -48,30 +48,54 @@ paths:
           in: "query"
           type: string
           description: "Long poll block duration in seconds"
-        - name: "If-None-Match" 
-          in: "header"
+        - name: "apid-config-index"
+          in: "query"
           type: string
-          description: "ETag value from request in previous request" 
+          description: "x-apid-config-index value from request in previous request"
+        - name: "type"
+          in: "query"
+          type: string
+          description: "filter configurations by type. When type filter is given, long-polling is not supported"
       responses:
         200:
           description: Successful response
           headers:
-            ETag:
+            x-apid-config-index:
               type: "string"
               description: "client can use this for response caching"        
           schema:
             $ref: '#/definitions/ConfigurationsResponse'
         304:
           description: Not Modified, No change in response based on If-None-Match header value. Cache representation.
-          headers:
-            ETag:
-              type: "string"
-              description: "client can use this for response caching"                    
         default:
           description: Error response
           schema:
             $ref: '#/definitions/ErrorResponse'
- 
+
+  /configurations/{configId}:
+    get:
+      tags:
+      - "configurations/{configId}"
+      description: |
+        Get a configuration by id
+      parameters:
+        - name: configId
+          in: path
+          required: true
+          type: string
+          description: configId
+      responses:
+        200:
+          description: Successful response
+          schema:
+            $ref: '#/definitions/Configuration'
+        304:
+          description: Not Modified, No change in response based on If-None-Match header value. Cache representation.
+        default:
+          description: Error response
+          schema:
+            $ref: '#/definitions/ErrorResponse'
+
   /blobs/{blobId}:
     get:
       tags:
@@ -123,9 +147,9 @@ definitions:
       contents: 
         type: array
         items:
-          $ref: '#/definitions/Configurations'  
+          $ref: '#/definitions/Configuration'
  
-  Configurations:
+  Configuration:
     properties:
       self:
         type: string
