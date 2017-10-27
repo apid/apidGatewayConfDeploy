@@ -21,6 +21,7 @@ import (
 	"time"
 
 	"github.com/apid/apid-core"
+	"github.com/apid/apid-core/util"
 	"net/http"
 	"sync"
 )
@@ -44,6 +45,7 @@ const (
 	maxIdleConnsPerHost         = 50
 	httpTimeout                 = time.Minute
 	configBearerToken           = "apigeesync_bearer_token"
+	configfwdProxyPortURL   =   "configcompletefwdp"
 )
 
 var (
@@ -61,6 +63,8 @@ func init() {
 }
 
 func initPlugin(s apid.Services) (apid.PluginData, error) {
+	var tr *http.Transport
+
 	services = s
 	log = services.Log().ForModule("apiGatewayConfDeploy")
 	log.Debug("start init")
@@ -111,11 +115,11 @@ func initPlugin(s apid.Services) (apid.PluginData, error) {
 
 	log.Debug("apiServerBaseURI = " + apiServerBaseURI.String())
 
+	tr = util.Transport(config.GetString(configfwdProxyPortURL))
+	tr.MaxIdleConnsPerHost =  maxIdleConnsPerHost
 	// initialize tracker client
 	httpClient := &http.Client{
-		Transport: &http.Transport{
-			MaxIdleConnsPerHost: maxIdleConnsPerHost,
-		},
+		Transport: tr,
 		Timeout: httpTimeout,
 		CheckRedirect: func(req *http.Request, _ []*http.Request) error {
 			req.Header.Set("Authorization", getBearerToken())
