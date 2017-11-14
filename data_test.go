@@ -202,6 +202,9 @@ var _ = Describe("data", func() {
 			location, err := testDbMan.getLocalFSLocation(testBlobId)
 			Expect(err).Should(Succeed())
 			Expect(location).Should(Equal(testBlobLocalFsPrefix + testBlobId))
+			// negative test
+			location, err = testDbMan.getLocalFSLocation("non-existent")
+			Expect(err).Should(Equal(sql.ErrNoRows))
 		})
 
 		It("should get configuration by Id", func() {

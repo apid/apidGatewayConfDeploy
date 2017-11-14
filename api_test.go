@@ -369,7 +369,7 @@ var _ = Describe("api", func() {
 	})
 
 	Context("GET /blobs", func() {
-		It("should get file bytesfrom endpoint", func() {
+		It("should get file bytes from endpoint", func() {
 			// setup http client
 			uri, err := url.Parse(apiTestUrl)
 			Expect(err).Should(Succeed())
@@ -395,6 +395,33 @@ var _ = Describe("api", func() {
 			body, err := ioutil.ReadAll(res.Body)
 			Expect(err).Should(Succeed())
 			Expect(string(body)).Should(Equal(randString))
+		})
+
+		It("should get error reponse", func() {
+			// setup http client
+			uri, err := url.Parse(apiTestUrl)
+			Expect(err).Should(Succeed())
+			uri.Path = blobEndpointPath + strconv.Itoa(testCount) + "/" + util.GenerateUUID()
+
+			// set test data
+			testData := [][]interface{}{
+				{"", sql.ErrNoRows},
+				{"", fmt.Errorf("test error")},
+			}
+			expectedCode := []int{
+				http.StatusNotFound,
+				http.StatusInternalServerError,
+			}
+
+			for i, data := range testData {
+				dummyDbMan.localFSLocation = data[0].(string)
+				dummyDbMan.err = data[1].(error)
+				// http get
+				res, err := http.Get(uri.String())
+				Expect(err).Should(Succeed())
+				res.Body.Close()
+				Expect(res.StatusCode).Should(Equal(expectedCode[i]))
+			}
 		})
 	})
 
