@@ -381,25 +381,22 @@ func (dbc *dbManager) updateLocalFsLocation(blobId, localFsLocation string) erro
 
 }
 
-func (dbc *dbManager) getLocalFSLocation(blobId string) (localFsLocation string, err error) {
+func (dbc *dbManager) getLocalFSLocation(blobId string) (string, error) {
 
 	log.Debugf("Getting the blob file for blobId {%s}", blobId)
-	rows, err := dbc.getDb().Query("SELECT local_fs_location FROM APID_BLOB_AVAILABLE WHERE id = '" + blobId + "'")
+	localFsLocation := sql.NullString{}
+	err := dbc.getDb().QueryRow("SELECT local_fs_location FROM APID_BLOB_AVAILABLE WHERE id = '" + blobId + "'").Scan(&localFsLocation)
 	if err != nil {
-		log.Errorf("SELECT local_fs_location failed %v", err)
+		if err != sql.ErrNoRows {
+			log.Errorf("SELECT local_fs_location failed %v", err)
+		}
 		return "", err
 	}
-
-	defer rows.Close()
-	for rows.Next() {
-		err = rows.Scan(&localFsLocation)
-		if err != nil {
-			log.Errorf("Scan local_fs_location failed %v", err)
-			return "", err
-		}
-		log.Debugf("Got the blob file {%s} for blobId {%s}", localFsLocation, blobId)
+	if localFsLocation.Valid {
+		return localFsLocation.String, nil
 	}
-	return
+	log.Warnf("local_fs_location for blob %s is null!", blobId)
+	return "", nil
 }
 
 func (dbc *dbManager) loadLsnFromDb() error {

@@ -63,7 +63,7 @@ func (d *dummyDbManager) updateLocalFsLocation(blobId, localFsLocation string) e
 }
 
 func (d *dummyDbManager) getLocalFSLocation(string) (string, error) {
-	return d.localFSLocation, nil
+	return d.localFSLocation, d.err
 }
 
 func (d *dummyDbManager) getConfigById(id string) (*Configuration, error) {

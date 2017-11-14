@@ -183,16 +183,23 @@ func (a *apiManager) apiReturnBlobData(w http.ResponseWriter, r *http.Request) {
 	blobId := vars["blobId"]
 	fs, err := a.dbMan.getLocalFSLocation(blobId)
 	if err != nil {
-		a.writeInternalError(w, "BlobId "+blobId+" has no mapping blob file")
+		if err == sql.ErrNoRows {
+			a.writeError(w, http.StatusNotFound, API_ERR_NOT_FOUND, "cannot find the blob")
+		} else {
+			log.Errorf("apiReturnBlobData error from db: %v", err)
+			a.writeInternalError(w, "BlobId "+blobId+" has no mapping blob file")
+		}
 		return
 	}
 	byte, err := ioutil.ReadFile(fs)
 	if err != nil {
+		log.Errorf("apiReturnBlobData error read file: %v, %v", fs, err)
 		a.writeInternalError(w, err.Error())
 		return
 	}
 	_, err = io.Copy(w, bytes.NewReader(byte))
 	if err != nil {
+		log.Errorf("apiReturnBlobData error copy file: %v, %v", fs, err)
 		a.writeInternalError(w, err.Error())
 	}
 	w.Header().Set("Content-Type", headerSteam)
