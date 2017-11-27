@@ -1,7 +1,9 @@
 # apidGatewayConfDeploy
 
+[![Build Status](https://travis-ci.org/apid/apidGatewayConfDeploy.svg)](https://travis-ci.org/apid/apidGatewayConfDeploy) [![GoDoc](https://godoc.org/github.com/apid/apidGatewayConfDeploy?status.svg)](https://godoc.org/github.com/apid/apidGatewayConfDeploy) [![Go Report Card](https://goreportcard.com/badge/github.com/apid/apidGatewayConfDeploy)](https://goreportcard.com/report/github.com/apid/apidGatewayConfDeploy)
+
 apidGatewayConfDeploy is a plugin for
-[apid](http://github.com/30x/apid).
+[apid](http://github.com/apid/apid).
 
 Gateways acting as clients will connect to apid; and this plugin will
 offer configuration updates that occur in the management. The plugin

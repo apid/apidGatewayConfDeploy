@@ -397,7 +397,7 @@ var _ = Describe("api", func() {
 			Expect(string(body)).Should(Equal(randString))
 		})
 
-		It("should get error reponse", func() {
+		It("should get error response", func() {
 			// setup http client
 			uri, err := url.Parse(apiTestUrl)
 			Expect(err).Should(Succeed())
