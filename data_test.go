@@ -126,7 +126,7 @@ var _ = Describe("data", func() {
 			// write
 			err := testDbMan.updateLSN(testLSN)
 			Expect(err).Should(Succeed())
-			rows, err := testDbMan.getDb().Query(`
+			rows, _ := testDbMan.getDb().Query(`
 				SELECT lsn from APID_CONFIGURATION_LSN;
 			`)
 			defer rows.Close()
@@ -203,7 +203,7 @@ var _ = Describe("data", func() {
 			Expect(err).Should(Succeed())
 			Expect(location).Should(Equal(testBlobLocalFsPrefix + testBlobId))
 			// negative test
-			location, err = testDbMan.getLocalFSLocation("non-existent")
+			_, err = testDbMan.getLocalFSLocation("non-existent")
 			Expect(err).Should(Equal(sql.ErrNoRows))
 		})
 
