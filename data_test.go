@@ -126,9 +126,10 @@ var _ = Describe("data", func() {
 			// write
 			err := testDbMan.updateLSN(testLSN)
 			Expect(err).Should(Succeed())
-			rows, _ := testDbMan.getDb().Query(`
+			rows, err := testDbMan.getDb().Query(`
 				SELECT lsn from APID_CONFIGURATION_LSN;
 			`)
+			Expect(err).Should(Succeed())
 			defer rows.Close()
 			count := 0
 			var lsn sql.NullString
