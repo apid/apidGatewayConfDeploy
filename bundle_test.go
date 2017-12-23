@@ -32,14 +32,14 @@ const (
 )
 
 var _ = Describe("api", func() {
-	var testCount int
+	// var testCount int
 	var testBundleMan *bundleManager
 	var dummyDbMan *dummyDbManager
 	var dummyApiMan *dummyApiManager
 	var blobServer *dummyBlobServer
 
 	var _ = BeforeEach(func() {
-		testCount += 1
+		// testCount += 1
 		concurrentDownloads := 5
 		downloadQueueSize := 5
 
