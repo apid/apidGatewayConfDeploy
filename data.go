@@ -120,6 +120,14 @@ func (dbc *dbManager) initDb() error {
 		return err
 	}
 
+	// add indexes
+	_, err = tx.Exec(`
+	CREATE INDEX IF NOT EXISTS config_type on METADATA_RUNTIME_ENTITY_METADATA (type);
+	`)
+	if err != nil {
+		return err
+	}
+
 	if err = tx.Commit(); err != nil {
 		return err
 	}
