@@ -87,43 +87,15 @@ func (dbc *dbManager) getDb() apid.DB {
 }
 
 func (dbc *dbManager) initDb() error {
-	tx, err := dbc.getDb().Begin()
-	if err != nil {
-		return err
-	}
-	defer tx.Rollback()
-	_, err = tx.Exec(`
-	CREATE TABLE IF NOT EXISTS APID_BLOB_AVAILABLE (
-		id text primary key,
-   		local_fs_location text NOT NULL
-	);
-	`)
-	if err != nil {
-		return err
-	}
-	_, err = tx.Exec(`
-	CREATE TABLE IF NOT EXISTS APID_CONFIGURATION_LSN (
-		lsn text primary key
-	);
-	`)
-	if err != nil {
+	if err := initTables(dbc.getDb()); err != nil {
+		log.Errorf("error in initTables(): %v", err)
 		return err
 	}
 
-	// insert a row if APID_CONFIGURATION_LSN is empty
-	_, err = tx.Exec(`
-	INSERT INTO APID_CONFIGURATION_LSN (lsn)
-	SELECT '0.0.0'
-	WHERE NOT EXISTS (SELECT * FROM APID_CONFIGURATION_LSN)
-	`)
-	if err != nil {
-		return err
+	if err := addIndexes(dbc.getDb()); err != nil {
+		// not on critical path, continue in case of error
+		log.Errorf("error in addIndexes(): %v", err)
 	}
-
-	if err = tx.Commit(); err != nil {
-		return err
-	}
-	log.Debug("Database table APID_BLOB_AVAILABLE, APID_CONFIGURATION_LSN created.")
 	return nil
 }
 
@@ -511,4 +483,62 @@ func structFromRow(t reflect.Type, row *sql.Row) (interface{}, error) {
 		}
 	}
 	return v.Interface(), nil
+}
+
+func initTables(db apid.DB) error {
+	tx, err := db.Begin()
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	_, err = tx.Exec(`
+	CREATE TABLE IF NOT EXISTS APID_BLOB_AVAILABLE (
+		id text primary key,
+   		local_fs_location text NOT NULL
+	);
+	`)
+	if err != nil {
+		return err
+	}
+	_, err = tx.Exec(`
+	CREATE TABLE IF NOT EXISTS APID_CONFIGURATION_LSN (
+		lsn text primary key
+	);
+	`)
+	if err != nil {
+		return err
+	}
+
+	// insert a row if APID_CONFIGURATION_LSN is empty
+	_, err = tx.Exec(`
+	INSERT INTO APID_CONFIGURATION_LSN (lsn)
+	SELECT '0.0.0'
+	WHERE NOT EXISTS (SELECT * FROM APID_CONFIGURATION_LSN)
+	`)
+	if err != nil {
+		return err
+	}
+
+	if err = tx.Commit(); err != nil {
+		return err
+	}
+	log.Debug("Database table APID_BLOB_AVAILABLE, APID_CONFIGURATION_LSN created.")
+	return nil
+}
+
+func addIndexes(db apid.DB) error {
+	log.Debug("add index to sqlite")
+	tx, err := db.Begin()
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	// add indexes
+	_, err = tx.Exec(`
+	CREATE INDEX IF NOT EXISTS config_type on METADATA_RUNTIME_ENTITY_METADATA (type);
+	`)
+	if err != nil {
+		return err
+	}
+	return tx.Commit()
 }
